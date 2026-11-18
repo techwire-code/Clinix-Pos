@@ -1,0 +1,6 @@
+{
+  "name": "Clinix Community Pharmacy POS",
+  "description": "Offline-first Point of Sale, Inventory, Party Ledger, Thermal ESC/POS Printer, A5 PDF Invoice, and Flutter/SQLite Dart source architecture for Clinix Community Pharmacy, 17 KM Ferozepur Road, Lahore.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
