@@ -40,9 +40,57 @@ function writeStorage<T>(key: string, data: T): void {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
+export function calculateUnitPrice(
+  boxPrice: number,
+  unitsPerBox: number,
+): number {
+  const safeUnits = Math.max(1, Math.floor(Number(unitsPerBox) || 1));
+  const safeBox = Math.max(0, Number(boxPrice) || 0);
+  return Math.round((safeBox / safeUnits) * 100) / 100;
+}
+
 export function loadItems(): PharmacyItem[] {
   const existing = readStorage<PharmacyItem[] | null>(STORAGE_KEYS.items, null);
-  if (existing) return existing;
+  if (existing && Array.isArray(existing)) {
+    return existing.map((item, idx) => {
+      const unitsPerBox =
+        Number.isFinite(Number(item.unitsPerBox)) &&
+        Number(item.unitsPerBox) >= 1
+          ? Math.floor(Number(item.unitsPerBox))
+          : 1;
+      const fallbackCost = Number.isFinite(Number(item.costPrice))
+        ? Math.max(0, Number(item.costPrice))
+        : 0;
+      const fallbackSelling = Number.isFinite(Number(item.sellingPrice))
+        ? Math.max(0, Number(item.sellingPrice))
+        : 0;
+      const boxCostPrice = Number.isFinite(Number(item.boxCostPrice))
+        ? Math.max(0, Number(item.boxCostPrice))
+        : Math.round(fallbackCost * unitsPerBox * 100) / 100;
+      const boxSellingPrice = Number.isFinite(Number(item.boxSellingPrice))
+        ? Math.max(0, Number(item.boxSellingPrice))
+        : Math.round(fallbackSelling * unitsPerBox * 100) / 100;
+
+      return {
+        ...item,
+        id: Number.isFinite(Number(item.id)) ? Number(item.id) : idx + 1,
+        name: String(item.name ?? 'Unnamed Medicine'),
+        barcode: String(item.barcode ?? ''),
+        category: String(item.category || 'General'),
+        unitsPerBox,
+        boxCostPrice,
+        boxSellingPrice,
+        costPrice: calculateUnitPrice(boxCostPrice, unitsPerBox),
+        sellingPrice: calculateUnitPrice(boxSellingPrice, unitsPerBox),
+        stockQuantity: Number.isFinite(Number(item.stockQuantity))
+          ? Math.max(0, Math.floor(Number(item.stockQuantity)))
+          : 0,
+        unit: String(item.unit || 'Unit'),
+        batchNumber: String(item.batchNumber ?? ''),
+        expiryDate: String(item.expiryDate || '2027-12-31'),
+      };
+    });
+  }
   writeStorage(STORAGE_KEYS.items, SEED_ITEMS);
   return SEED_ITEMS;
 }
@@ -329,12 +377,26 @@ export function executePurchaseTransaction(params: {
       );
       if (existingIdx >= 0) {
         const current = updatedItems[existingIdx];
+        const safeUnitsPerBox =
+          line.unitsPerBox >= 1 ? Math.floor(line.unitsPerBox) : current.unitsPerBox || 1;
+        const safeBoxCost =
+          line.boxCostPrice > 0
+            ? line.boxCostPrice
+            : Math.round(line.unitCost * safeUnitsPerBox * 100) / 100;
+        const safeBoxSelling =
+          line.boxSellingPrice > 0
+            ? line.boxSellingPrice
+            : line.sellingPrice > 0
+              ? Math.round(line.sellingPrice * safeUnitsPerBox * 100) / 100
+              : current.boxSellingPrice;
         updatedItems[existingIdx] = {
           ...current,
           stockQuantity: current.stockQuantity + line.quantity,
-          costPrice: line.unitCost,
-          sellingPrice:
-            line.sellingPrice > 0 ? line.sellingPrice : current.sellingPrice,
+          unitsPerBox: safeUnitsPerBox,
+          boxCostPrice: safeBoxCost,
+          boxSellingPrice: safeBoxSelling,
+          costPrice: calculateUnitPrice(safeBoxCost, safeUnitsPerBox),
+          sellingPrice: calculateUnitPrice(safeBoxSelling, safeUnitsPerBox),
           batchNumber: line.batchNumber.trim() || current.batchNumber,
           expiryDate: line.expiryDate || current.expiryDate,
         };
@@ -345,6 +407,17 @@ export function executePurchaseTransaction(params: {
 
     if (resolvedItemId === null) {
       resolvedItemId = nextItemId++;
+      const safeUnitsPerBox = Math.max(1, Math.floor(line.unitsPerBox || 1));
+      const safeBoxCost =
+        line.boxCostPrice >= 0
+          ? line.boxCostPrice
+          : Math.round(line.unitCost * safeUnitsPerBox * 100) / 100;
+      const safeBoxSelling =
+        line.boxSellingPrice > 0
+          ? line.boxSellingPrice
+          : line.sellingPrice > 0
+            ? Math.round(line.sellingPrice * safeUnitsPerBox * 100) / 100
+            : Math.round(safeBoxCost * 1.2 * 100) / 100;
       const newItem: PharmacyItem = {
         id: resolvedItemId,
         name: line.itemName.trim(),
@@ -352,11 +425,13 @@ export function executePurchaseTransaction(params: {
           line.barcode.trim() ||
           `89640010${String(resolvedItemId).padStart(4, '0')}`,
         category: line.category.trim() || 'General',
-        costPrice: line.unitCost,
-        sellingPrice:
-          line.sellingPrice > 0 ? line.sellingPrice : line.unitCost * 1.2,
+        unitsPerBox: safeUnitsPerBox,
+        boxCostPrice: safeBoxCost,
+        boxSellingPrice: safeBoxSelling,
+        costPrice: calculateUnitPrice(safeBoxCost, safeUnitsPerBox),
+        sellingPrice: calculateUnitPrice(safeBoxSelling, safeUnitsPerBox),
         stockQuantity: line.quantity,
-        unit: line.unit.trim() || 'Pack',
+        unit: line.unit.trim() || 'Tablet',
         batchNumber: line.batchNumber.trim() || `BAT-${resolvedItemId}`,
         expiryDate: line.expiryDate || '2027-12-31',
       };

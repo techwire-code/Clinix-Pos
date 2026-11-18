@@ -35,6 +35,9 @@ class PharmacyItem {
   final String name;
   final String barcode;
   final String category;
+  final int unitsPerBox;
+  final double boxCostPrice;
+  final double boxSellingPrice;
   final double costPrice;
   final double sellingPrice;
   final int stockQuantity;
@@ -47,6 +50,9 @@ class PharmacyItem {
     required this.name,
     required this.barcode,
     required this.category,
+    this.unitsPerBox = 1,
+    this.boxCostPrice = 0.0,
+    this.boxSellingPrice = 0.0,
     required this.costPrice,
     required this.sellingPrice,
     required this.stockQuantity,
@@ -54,6 +60,12 @@ class PharmacyItem {
     required this.batchNumber,
     required this.expiryDate,
   });
+
+  static double calculateUnitPrice(double boxPrice, int unitsPerBox) {
+    final safeUnits = unitsPerBox < 1 ? 1 : unitsPerBox;
+    final raw = (boxPrice < 0 ? 0.0 : boxPrice) / safeUnits;
+    return (raw * 100).roundToDouble() / 100;
+  }
 
   double get unitMargin => sellingPrice - costPrice;
 
@@ -70,6 +82,9 @@ class PharmacyItem {
     String? name,
     String? barcode,
     String? category,
+    int? unitsPerBox,
+    double? boxCostPrice,
+    double? boxSellingPrice,
     double? costPrice,
     double? sellingPrice,
     int? stockQuantity,
@@ -77,13 +92,20 @@ class PharmacyItem {
     String? batchNumber,
     String? expiryDate,
   }) {
+    final nextUnits = unitsPerBox ?? this.unitsPerBox;
+    final nextBoxCost = boxCostPrice ?? this.boxCostPrice;
+    final nextBoxSelling = boxSellingPrice ?? this.boxSellingPrice;
     return PharmacyItem(
       id: id ?? this.id,
       name: name ?? this.name,
       barcode: barcode ?? this.barcode,
       category: category ?? this.category,
-      costPrice: costPrice ?? this.costPrice,
-      sellingPrice: sellingPrice ?? this.sellingPrice,
+      unitsPerBox: nextUnits,
+      boxCostPrice: nextBoxCost,
+      boxSellingPrice: nextBoxSelling,
+      costPrice: costPrice ?? calculateUnitPrice(nextBoxCost, nextUnits),
+      sellingPrice:
+          sellingPrice ?? calculateUnitPrice(nextBoxSelling, nextUnits),
       stockQuantity: stockQuantity ?? this.stockQuantity,
       unit: unit ?? this.unit,
       batchNumber: batchNumber ?? this.batchNumber,
@@ -96,6 +118,9 @@ class PharmacyItem {
         'name': name,
         'barcode': barcode,
         'category': category,
+        'units_per_box': unitsPerBox,
+        'box_cost_price': boxCostPrice,
+        'box_selling_price': boxSellingPrice,
         'cost_price': costPrice,
         'selling_price': sellingPrice,
         'stock_quantity': stockQuantity,
@@ -104,18 +129,32 @@ class PharmacyItem {
         'expiry_date': expiryDate,
       };
 
-  factory PharmacyItem.fromMap(Map<String, dynamic> map) => PharmacyItem(
-        id: map['id'] as int?,
-        name: map['name'] as String,
-        barcode: (map['barcode'] ?? '') as String,
-        category: (map['category'] ?? 'General') as String,
-        costPrice: (map['cost_price'] as num).toDouble(),
-        sellingPrice: (map['selling_price'] as num).toDouble(),
-        stockQuantity: (map['stock_quantity'] as num).toInt(),
-        unit: (map['unit'] ?? 'Pack') as String,
-        batchNumber: (map['batch_number'] ?? '') as String,
-        expiryDate: (map['expiry_date'] ?? '') as String,
-      );
+  factory PharmacyItem.fromMap(Map<String, dynamic> map) {
+    final units = ((map['units_per_box'] as num?)?.toInt() ?? 1);
+    final safeUnits = units < 1 ? 1 : units;
+    final unitCost = (map['cost_price'] as num).toDouble();
+    final unitSelling = (map['selling_price'] as num).toDouble();
+    final boxCost = (map['box_cost_price'] as num?)?.toDouble() ??
+        (unitCost * safeUnits);
+    final boxSelling = (map['box_selling_price'] as num?)?.toDouble() ??
+        (unitSelling * safeUnits);
+
+    return PharmacyItem(
+      id: map['id'] as int?,
+      name: map['name'] as String,
+      barcode: (map['barcode'] ?? '') as String,
+      category: (map['category'] ?? 'General') as String,
+      unitsPerBox: safeUnits,
+      boxCostPrice: boxCost,
+      boxSellingPrice: boxSelling,
+      costPrice: calculateUnitPrice(boxCost, safeUnits),
+      sellingPrice: calculateUnitPrice(boxSelling, safeUnits),
+      stockQuantity: (map['stock_quantity'] as num).toInt(),
+      unit: (map['unit'] ?? 'Unit') as String,
+      batchNumber: (map['batch_number'] ?? '') as String,
+      expiryDate: (map['expiry_date'] ?? '') as String,
+    );
+  }
 }
 
 class Party {

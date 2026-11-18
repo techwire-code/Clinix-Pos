@@ -15,6 +15,7 @@ import {
   PurchaseDraftLine,
   PurchaseRecord,
 } from '../types/pharmacy';
+import { calculateUnitPrice } from '../services/localDb';
 
 interface PurchasesWorkspaceProps {
   items: PharmacyItem[];
@@ -72,18 +73,21 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
   const [lineCategory, setLineCategory] = useState(
     items[0]?.category ?? 'General',
   );
-  const [lineUnit, setLineUnit] = useState(items[0]?.unit ?? 'Pack');
+  const [lineUnit, setLineUnit] = useState(items[0]?.unit ?? 'Tablet');
+  const [lineUnitsPerBox, setLineUnitsPerBox] = useState(
+    String(items[0]?.unitsPerBox ?? 10),
+  );
+  const [lineBoxCost, setLineBoxCost] = useState(
+    String(items[0]?.boxCostPrice ?? 0),
+  );
+  const [lineBoxSelling, setLineBoxSelling] = useState(
+    String(items[0]?.boxSellingPrice ?? 0),
+  );
   const [lineBatch, setLineBatch] = useState(items[0]?.batchNumber ?? '');
   const [lineExpiry, setLineExpiry] = useState(
     items[0]?.expiryDate ?? '2027-12-31',
   );
   const [lineQty, setLineQty] = useState('10');
-  const [lineCost, setLineCost] = useState(
-    String(items[0]?.costPrice ?? 0),
-  );
-  const [lineSelling, setLineSelling] = useState(
-    String(items[0]?.sellingPrice ?? 0),
-  );
 
   // Add Supplier Modal & Settle Supplier Modal
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
@@ -154,10 +158,11 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
     setLineBarcode(found.barcode);
     setLineCategory(found.category);
     setLineUnit(found.unit);
+    setLineUnitsPerBox(String(found.unitsPerBox || 1));
+    setLineBoxCost(String(found.boxCostPrice));
+    setLineBoxSelling(String(found.boxSellingPrice));
     setLineBatch(found.batchNumber);
     setLineExpiry(found.expiryDate);
-    setLineCost(String(found.costPrice));
-    setLineSelling(String(found.sellingPrice));
   };
 
   const openPurchaseModal = (preselectedSupplierId?: number) => {
@@ -169,41 +174,72 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
     setPaidAmountInput('0');
     setDraftLines([]);
     setPurchaseError(null);
-    setIsNewSkuMode(false);
     if (items[0]) {
+      setIsNewSkuMode(false);
       populateLineFromInventoryItem(items[0].id);
+    } else {
+      setIsNewSkuMode(true);
+      setLineName('');
+      setLineBarcode('');
+      setLineCategory('General');
+      setLineUnit('Tablet');
+      setLineUnitsPerBox('10');
+      setLineBoxCost('0');
+      setLineBoxSelling('0');
+      setLineBatch('');
     }
     setLineQty('10');
     setIsPurchaseModalOpen(true);
   };
 
-  const handleAddDraftLine = () => {
+  const computedUnitsPerBox = Math.max(
+    1,
+    Math.floor(Number(lineUnitsPerBox) || 1),
+  );
+  const computedBoxCost = Math.max(0, Number(lineBoxCost) || 0);
+  const computedBoxSelling = Math.max(0, Number(lineBoxSelling) || 0);
+  const computedUnitCost = calculateUnitPrice(
+    computedBoxCost,
+    computedUnitsPerBox,
+  );
+  const computedUnitSelling = calculateUnitPrice(
+    computedBoxSelling,
+    computedUnitsPerBox,
+  );
+
+  const buildCurrentDraftLine = (): PurchaseDraftLine | null => {
     const qty = Math.max(0, Math.floor(Number(lineQty) || 0));
-    const cost = Math.max(0, Number(lineCost) || 0);
-    const selling = Math.max(0, Number(lineSelling) || 0);
 
     if (!lineName.trim()) {
       setPurchaseError('Enter a medicine name before adding the line.');
-      return;
+      return null;
     }
     if (qty <= 0) {
-      setPurchaseError('Purchase quantity must be at least 1.');
-      return;
+      setPurchaseError('Purchase quantity (units) must be at least 1.');
+      return null;
     }
 
     setPurchaseError(null);
-    const newLine: PurchaseDraftLine = {
+    return {
       itemId: isNewSkuMode ? null : selectedItemId || null,
       itemName: lineName.trim(),
       barcode: lineBarcode.trim(),
       category: lineCategory.trim() || 'General',
-      unit: lineUnit.trim() || 'Pack',
+      unit: lineUnit.trim() || 'Tablet',
+      unitsPerBox: computedUnitsPerBox,
+      boxCostPrice: computedBoxCost,
+      boxSellingPrice: computedBoxSelling,
       batchNumber: lineBatch.trim(),
       expiryDate: lineExpiry,
       quantity: qty,
-      unitCost: cost,
-      sellingPrice: selling,
+      unitCost: computedUnitCost,
+      sellingPrice: computedUnitSelling,
     };
+  };
+
+  const handleAddDraftLine = () => {
+    const newLine = buildCurrentDraftLine();
+    if (!newLine) return;
 
     setDraftLines((prev) => [...prev, newLine]);
     if (isNewSkuMode) {
@@ -213,10 +249,15 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
     }
   };
 
-  const draftTotalAmount = draftLines.reduce(
-    (sum, l) => sum + l.unitCost * l.quantity,
-    0,
-  );
+  const pendingLineTotal =
+    draftLines.length === 0 && lineName.trim()
+      ? computedUnitCost * Math.max(0, Math.floor(Number(lineQty) || 0))
+      : 0;
+
+  const draftTotalAmount =
+    draftLines.length > 0
+      ? draftLines.reduce((sum, l) => sum + l.unitCost * l.quantity, 0)
+      : pendingLineTotal;
 
   const handlePaymentModeChange = (mode: PaymentMode) => {
     setPaymentMode(mode);
@@ -240,17 +281,23 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
       setPurchaseError('Select or add a supplier first.');
       return;
     }
-    if (draftLines.length === 0) {
-      setPurchaseError('Add at least one medicine line to the purchase bill.');
-      return;
+
+    let finalLines = draftLines;
+    if (finalLines.length === 0) {
+      const autoLine = buildCurrentDraftLine();
+      if (!autoLine) return;
+      finalLines = [autoLine];
     }
+
+    const total = finalLines.reduce((s, l) => s + l.unitCost * l.quantity, 0);
+    const safePaid = Math.min(Math.max(0, Number(paidAmountInput) || 0), total);
 
     try {
       onCompletePurchase({
         supplier,
         supplierInvoiceNo,
-        lines: draftLines,
-        paidAmount: parsedPaidAmount,
+        lines: finalLines,
+        paidAmount: safePaid,
         paymentMode,
       });
       setIsPurchaseModalOpen(false);
@@ -645,6 +692,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
           aria-labelledby="record-purchase-title"
         >
           <form
+            noValidate
             onSubmit={handleSubmitPurchase}
             className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
           >
@@ -753,8 +801,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                         setLineName('');
                         setLineBarcode('');
                         setLineBatch('');
-                        setLineCost('0');
-                        setLineSelling('0');
+                        setLineUnit('Tablet');
+                        setLineUnitsPerBox('10');
+                        setLineBoxCost('0');
+                        setLineBoxSelling('0');
                       }}
                       className={`rounded-md px-2.5 py-1 text-xs font-medium ${
                         isNewSkuMode
@@ -791,7 +841,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     <>
                       <div className="sm:col-span-3">
                         <label className="mb-1 block text-[11px] font-medium text-slate-600">
-                          New Medicine Name
+                          New Medicine Name *
                         </label>
                         <input
                           type="text"
@@ -812,12 +862,78 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                           className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs focus:border-[#0D7A5F] focus:outline-none"
                         />
                       </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                          Barcode (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={lineBarcode}
+                          onChange={(e) => setLineBarcode(e.target.value)}
+                          placeholder="Auto if blank"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                          Category
+                        </label>
+                        <input
+                          type="text"
+                          value={lineCategory}
+                          onChange={(e) => setLineCategory(e.target.value)}
+                          placeholder="General"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs focus:border-[#0D7A5F] focus:outline-none"
+                        />
+                      </div>
                     </>
                   )}
 
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-[11px] font-medium text-slate-600">
-                      Quantity Received
+                      1. Unit in Box
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={lineUnitsPerBox}
+                      onChange={(e) => setLineUnitsPerBox(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                      2. Box Cost (PKR)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={lineBoxCost}
+                      onChange={(e) => setLineBoxCost(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                      3. Box Selling (PKR)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={lineBoxSelling}
+                      onChange={(e) => setLineBoxSelling(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                      Qty Received ({lineUnit || 'Units'})
                     </label>
                     <input
                       type="number"
@@ -830,34 +946,6 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-[11px] font-medium text-slate-600">
-                      Unit Cost (PKR)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={lineCost}
-                      onChange={(e) => setLineCost(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
-                      Selling Price (PKR)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={lineSelling}
-                      onChange={(e) => setLineSelling(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-1">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
                       Batch #
                     </label>
                     <input
@@ -868,7 +956,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     />
                   </div>
 
-                  <div className="sm:col-span-1">
+                  <div className="sm:col-span-2">
                     <label className="mb-1 block text-[11px] font-medium text-slate-600">
                       Expiry
                     </label>
@@ -878,6 +966,21 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       onChange={(e) => setLineExpiry(e.target.value)}
                       className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
                     />
+                  </div>
+
+                  <div className="sm:col-span-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-2 text-[11px]">
+                    <span className="text-slate-600">
+                      Auto Unit Cost:{' '}
+                      <strong className="font-mono-tabular text-slate-900">
+                        PKR {computedUnitCost.toFixed(2)}
+                      </strong>
+                    </span>
+                    <span className="text-slate-600">
+                      Auto Unit Selling:{' '}
+                      <strong className="font-mono-tabular text-[#0D7A5F]">
+                        PKR {computedUnitSelling.toFixed(2)} / {lineUnit || 'Unit'}
+                      </strong>
+                    </span>
                   </div>
                 </div>
 
@@ -1008,8 +1111,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={draftLines.length === 0}
-                className="rounded-lg bg-[#0D7A5F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0A634D] disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="rounded-lg bg-[#0D7A5F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0A634D]"
               >
                 Save Purchase & Restock Inventory
               </button>

@@ -9,10 +9,13 @@ export interface PharmacyItem {
   name: string;
   barcode: string;
   category: string;
-  costPrice: number;
-  sellingPrice: number;
-  stockQuantity: number;
-  unit: string;
+  unitsPerBox: number; // Number of units inside 1 box
+  boxCostPrice: number; // Cost price of the whole box
+  boxSellingPrice: number; // Selling price of the whole box
+  costPrice: number; // Auto-calculated per-unit cost (boxCostPrice / unitsPerBox)
+  sellingPrice: number; // Auto-calculated per-unit selling price (boxSellingPrice / unitsPerBox)
+  stockQuantity: number; // Stock on hand in units
+  unit: string; // Dispensing unit label (Tablet, Capsule, Bottle, etc.)
   batchNumber: string;
   expiryDate: string; // yyyy-MM-dd
 }
@@ -99,6 +102,9 @@ export interface PurchaseDraftLine {
   barcode: string;
   category: string;
   unit: string;
+  unitsPerBox: number;
+  boxCostPrice: number;
+  boxSellingPrice: number;
   batchNumber: string;
   expiryDate: string;
   quantity: number;

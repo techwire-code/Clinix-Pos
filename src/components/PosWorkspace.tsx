@@ -195,7 +195,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
     addItemToCart(matched);
     setScannerStatus({
       type: 'success',
-      message: `Added ${matched.name} · PKR ${matched.sellingPrice.toFixed(0)}`,
+      message: `Added ${matched.name} · PKR ${matched.sellingPrice.toFixed(2)} / ${matched.unit}`,
     });
 
     if (!continuousScan) {
@@ -407,10 +407,10 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
                   <div className="mt-4 flex items-end justify-between border-t border-slate-100 pt-3">
                     <div>
                       <span className="block text-[11px] text-slate-500">
-                        Selling Price
+                        Per {item.unit} Price
                       </span>
                       <span className="font-mono-tabular text-base font-bold text-[#0D7A5F]">
-                        PKR {item.sellingPrice.toFixed(0)}
+                        PKR {item.sellingPrice.toFixed(2)}
                       </span>
                     </div>
                     <div className="text-right">
@@ -502,8 +502,9 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
                           {line.item.name}
                         </p>
                         <p className="font-mono-tabular text-xs text-slate-500">
-                          Rate PKR {line.item.sellingPrice.toFixed(0)} · Cost{' '}
-                          {line.item.costPrice.toFixed(0)}
+                          PKR {line.item.sellingPrice.toFixed(2)} /{' '}
+                          {line.item.unit} · Cost{' '}
+                          {line.item.costPrice.toFixed(2)}
                         </p>
                       </div>
                       <button

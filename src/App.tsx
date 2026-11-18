@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import {
   Code2,
+  LayoutDashboard,
+  LogOut,
   Menu,
   Package,
   Printer,
@@ -21,6 +23,7 @@ import {
   SaleRecord,
 } from './types/pharmacy';
 import {
+  calculateUnitPrice,
   executePurchaseTransaction,
   executeSaleTransaction,
   loadItems,
@@ -33,6 +36,8 @@ import {
   saveParties,
   savePrinterConfig,
 } from './services/localDb';
+import { LoginScreen, StaffSession } from './components/LoginScreen';
+import { DashboardWorkspace } from './components/DashboardWorkspace';
 import { PosWorkspace } from './components/PosWorkspace';
 import { InventoryWorkspace } from './components/InventoryWorkspace';
 import { PurchasesWorkspace } from './components/PurchasesWorkspace';
@@ -42,6 +47,7 @@ import { DartSourceWorkspace } from './components/DartSourceWorkspace';
 import { InvoiceModal } from './components/InvoiceModal';
 
 type NavTab =
+  | 'dashboard'
   | 'pos'
   | 'inventory'
   | 'purchases'
@@ -50,6 +56,7 @@ type NavTab =
   | 'dart';
 
 const NAV_ITEMS: { id: NavTab; label: string; icon: typeof ShoppingBag }[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'pos', label: 'POS Billing', icon: ShoppingBag },
   { id: 'inventory', label: 'Inventory', icon: Package },
   { id: 'purchases', label: 'Purchases & Suppliers', icon: Truck },
@@ -58,8 +65,24 @@ const NAV_ITEMS: { id: NavTab; label: string; icon: typeof ShoppingBag }[] = [
   { id: 'dart', label: 'Flutter / Dart Source', icon: Code2 },
 ];
 
+const SESSION_STORAGE_KEY = 'clinix_pos_session_v1';
+
+function loadSession(): StaffSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StaffSession;
+    return parsed?.username ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<NavTab>('pos');
+  const [session, setSession] = useState<StaffSession | null>(() =>
+    loadSession(),
+  );
+  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [items, setItems] = useState<PharmacyItem[]>(() => loadItems());
@@ -72,6 +95,27 @@ export default function App() {
     loadPrinterConfig(),
   );
   const [activeInvoice, setActiveInvoice] = useState<SaleRecord | null>(null);
+
+  const handleLoginSuccess = (nextSession: StaffSession) => {
+    try {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSession));
+    } catch {
+      // Ignore storage errors
+    }
+    setSession(nextSession);
+    setActiveTab('dashboard');
+  };
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    setSession(null);
+    setActiveInvoice(null);
+    setMobileMenuOpen(false);
+  };
 
   const handleCompleteSale = (params: {
     cartLines: CartLine[];
@@ -131,19 +175,69 @@ export default function App() {
   const handleSaveItem = (
     payload: Omit<PharmacyItem, 'id'> & { id?: number },
   ) => {
-    setItems((prev) => {
-      let next: PharmacyItem[];
-      if (payload.id) {
-        next = prev.map((it) =>
-          it.id === payload.id ? ({ ...payload, id: payload.id } as PharmacyItem) : it,
-        );
-      } else {
-        const nextId = prev.reduce((max, it) => Math.max(max, it.id), 0) + 1;
-        next = [{ ...payload, id: nextId }, ...prev];
-      }
-      saveItems(next);
-      return next;
-    });
+    const safeUnitsPerBox = Number.isFinite(payload.unitsPerBox)
+      ? Math.max(1, Math.floor(payload.unitsPerBox))
+      : 1;
+    const safeBoxCost = Number.isFinite(payload.boxCostPrice)
+      ? Math.max(0, payload.boxCostPrice)
+      : 0;
+    const safeBoxSelling = Number.isFinite(payload.boxSellingPrice)
+      ? Math.max(0, payload.boxSellingPrice)
+      : 0;
+    const safeCost = calculateUnitPrice(safeBoxCost, safeUnitsPerBox);
+    const safeSelling = calculateUnitPrice(safeBoxSelling, safeUnitsPerBox);
+    const safeStock = Number.isFinite(payload.stockQuantity)
+      ? Math.max(0, Math.floor(payload.stockQuantity))
+      : 0;
+
+    let next: PharmacyItem[];
+    if (payload.id) {
+      const sanitized: PharmacyItem = {
+        ...payload,
+        id: payload.id,
+        name: payload.name.trim(),
+        barcode:
+          payload.barcode.trim() ||
+          `89640010${String(payload.id).padStart(4, '0')}`,
+        category: payload.category.trim() || 'General',
+        unitsPerBox: safeUnitsPerBox,
+        boxCostPrice: safeBoxCost,
+        boxSellingPrice: safeBoxSelling,
+        costPrice: safeCost,
+        sellingPrice: safeSelling,
+        stockQuantity: safeStock,
+        unit: payload.unit.trim() || 'Tablet',
+        batchNumber:
+          payload.batchNumber.trim() || `BAT-${String(payload.id).padStart(4, '0')}`,
+        expiryDate: payload.expiryDate || '2027-12-31',
+      };
+      next = items.map((it) => (it.id === payload.id ? sanitized : it));
+    } else {
+      const nextId = items.reduce((max, it) => Math.max(max, it.id), 0) + 1;
+      const created: PharmacyItem = {
+        ...payload,
+        id: nextId,
+        name: payload.name.trim(),
+        barcode:
+          payload.barcode.trim() ||
+          `89640010${String(nextId).padStart(4, '0')}`,
+        category: payload.category.trim() || 'General',
+        unitsPerBox: safeUnitsPerBox,
+        boxCostPrice: safeBoxCost,
+        boxSellingPrice: safeBoxSelling,
+        costPrice: safeCost,
+        sellingPrice: safeSelling,
+        stockQuantity: safeStock,
+        unit: payload.unit.trim() || 'Tablet',
+        batchNumber:
+          payload.batchNumber.trim() || `BAT-${String(nextId).padStart(4, '0')}`,
+        expiryDate: payload.expiryDate || '2027-12-31',
+      };
+      next = [created, ...items];
+    }
+
+    saveItems(next);
+    setItems(next);
   };
 
   const handleDeleteItem = (id: number) => {
@@ -190,6 +284,10 @@ export default function App() {
     setActiveInvoice(null);
   };
 
+  if (!session) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
   const activeNavMeta =
     NAV_ITEMS.find((n) => n.id === activeTab) ?? NAV_ITEMS[0];
 
@@ -231,11 +329,11 @@ export default function App() {
         </nav>
       </div>
 
-      <div className="border-t border-slate-200 pt-4">
-        <div className="mb-3 text-xs text-slate-500">
-          <p className="font-medium text-slate-700">Offline SQLite Storage</p>
+      <div className="space-y-2 border-t border-slate-200 pt-4">
+        <div className="mb-1 text-xs text-slate-500">
+          <p className="font-medium text-slate-800">{session.displayName}</p>
           <p className="mt-0.5 font-mono-tabular">
-            {items.length} SKUs · {sales.length} Bills
+            {session.role} · {items.length} SKUs
           </p>
         </div>
         <button
@@ -245,6 +343,14 @@ export default function App() {
         >
           <RotateCcw className="h-3.5 w-3.5" />
           <span>Reset Demo Data</span>
+        </button>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 whitespace-nowrap transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          <span>Sign Out</span>
         </button>
       </div>
     </div>
@@ -302,16 +408,8 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
-            {activeTab !== 'dart' ? (
-              <button
-                type="button"
-                onClick={() => setActiveTab('dart')}
-                className="rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white whitespace-nowrap transition-colors hover:bg-slate-800"
-              >
-                Inspect Dart Source
-              </button>
-            ) : (
+          <div className="flex items-center gap-2.5 shrink-0">
+            {activeTab !== 'pos' && (
               <button
                 type="button"
                 onClick={() => setActiveTab('pos')}
@@ -320,11 +418,41 @@ export default function App() {
                 Open Live POS
               </button>
             )}
+            {activeTab !== 'dart' ? (
+              <button
+                type="button"
+                onClick={() => setActiveTab('dart')}
+                className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 whitespace-nowrap transition-colors hover:bg-slate-50"
+              >
+                Inspect Dart Source
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setActiveTab('dashboard')}
+                className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 whitespace-nowrap transition-colors hover:bg-slate-50"
+              >
+                Back to Dashboard
+              </button>
+            )}
           </div>
         </header>
 
         {/* Workspace Viewport */}
         <main className="mx-auto w-full max-w-[1400px] flex-1 p-4 sm:p-6">
+          {activeTab === 'dashboard' && (
+            <DashboardWorkspace
+              session={session}
+              items={items}
+              parties={parties}
+              sales={sales}
+              purchases={purchases}
+              onGoToPos={() => setActiveTab('pos')}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              onOpenInvoiceModal={(sale) => setActiveInvoice(sale)}
+            />
+          )}
+
           {activeTab === 'pos' && (
             <PosWorkspace
               items={items}
