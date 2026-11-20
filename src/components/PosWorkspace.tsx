@@ -24,12 +24,17 @@ import {
   PharmacyItem,
   PharmacySettings,
 } from '../types/pharmacy';
-import { isCreditPaymentMode } from '../services/localDb';
+import {
+  formatMoney,
+  getCurrencyLabel,
+  isCreditPaymentMode,
+} from '../services/localDb';
 
 interface PosWorkspaceProps {
   items: PharmacyItem[];
   parties: Party[];
   limitedAccess?: boolean;
+  hideCostAndProfit?: boolean;
   settings?: PharmacySettings;
   onCompleteSale: (params: {
     cartLines: CartLine[];
@@ -118,13 +123,15 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
   items,
   parties,
   limitedAccess = false,
+  hideCostAndProfit,
   settings,
   onCompleteSale,
 }) => {
-  const cur = (settings?.currencyLabel?.trim() || 'PKR').toUpperCase();
+  const cur = getCurrencyLabel(settings);
   const lowStockThreshold = Math.max(1, settings?.lowStockThreshold ?? 10);
-  const nearExpiryDays = Math.max(1, settings?.nearExpiryDays ?? 60);
+  const nearExpiryDays = Math.max(1, settings?.expiryAlertDays ?? 30);
   const preferUsbScannerFocus = settings?.preferUsbScannerFocus ?? true;
+  const shouldHideProfit = hideCostAndProfit ?? limitedAccess;
 
   const [mobileTab, setMobileTab] = useState<'catalog' | 'cart'>('catalog');
   const [searchQuery, setSearchQuery] = useState('');
@@ -371,7 +378,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
     addItemToCart(matched, 1);
     setScannerStatus({
       type: 'success',
-      message: `Added ${matched.name} · ${cur} ${matched.sellingPrice.toFixed(2)} / ${matched.unit}`,
+      message: `Added ${matched.name} · ${formatMoney(matched.sellingPrice, settings)} / ${matched.unit}`,
     });
 
     if (!continuousScan) {
@@ -529,7 +536,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
     ) {
       showToast(
         'error',
-        `Cash received (${cur} ${parsedCashReceived.toFixed(2)}) is less than Net Payable (${cur} ${netPayable.toFixed(2)}).`,
+        `Cash received (${formatMoney(parsedCashReceived, settings)}) is less than Net Payable (${formatMoney(netPayable, settings)}).`,
       );
       return;
     }
@@ -675,7 +682,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
               <div className="flex shrink-0 flex-col items-end gap-1.5">
                 <div className="text-right">
                   <span className="block font-mono-tabular text-sm font-bold text-[#0D7A5F] dark:text-emerald-400">
-                    {cur} {item.sellingPrice.toFixed(2)}
+                    {formatMoney(item.sellingPrice, settings)}
                   </span>
                   <span className="block text-[11px] text-slate-500 dark:text-slate-400">
                     per {item.unit}
@@ -729,7 +736,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
               </p>
               <p className="font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
                 {selectedCustomer.balance > 0
-                  ? `To Collect: ${cur} ${selectedCustomer.balance.toFixed(0)}`
+                  ? `To Collect: ${formatMoney(selectedCustomer.balance, settings)}`
                   : 'No pending Khata balance'}
               </p>
             </div>
@@ -774,7 +781,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
               >
                 <span className="truncate">{c.name}</span>
                 <span className="shrink-0 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
-                  Bal: {cur} {c.balance.toFixed(0)}
+                  Bal: {formatMoney(c.balance, settings)}
                 </span>
               </button>
             );
@@ -818,9 +825,9 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
                     {line.item.name}
                   </p>
                   <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
-                    {cur} {line.item.sellingPrice.toFixed(2)} / {line.item.unit}
-                    {!limitedAccess &&
-                      ` · Cost ${line.item.costPrice.toFixed(2)}`}
+                    {formatMoney(line.item.sellingPrice, settings)} / {line.item.unit}
+                    {!shouldHideProfit &&
+                      ` · Cost ${formatMoney(line.item.costPrice, settings)}`}
                   </p>
                 </div>
                 <button
@@ -910,7 +917,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
                     />
                   </div>
                   <div className="min-w-[76px] text-right font-mono-tabular text-xs font-bold text-slate-900 dark:text-slate-100">
-                    {cur} {lineTotal.toFixed(2)}
+                    {formatMoney(lineTotal, settings)}
                   </div>
                 </div>
               </div>
@@ -1036,10 +1043,8 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
                 }`}
               >
                 {parsedCashReceived === null
-                  ? `${cur} 0.00`
-                  : cashBalanceDelta >= 0
-                    ? `${cur} ${cashBalanceDelta.toFixed(2)}`
-                    : `-${cur} ${Math.abs(cashBalanceDelta).toFixed(2)}`}
+                  ? formatMoney(0, settings)
+                  : formatMoney(cashBalanceDelta, settings)}
               </span>
             </div>
           </div>
@@ -1052,21 +1057,21 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
           <div className="flex justify-between text-slate-600 dark:text-slate-400">
             <span>Subtotal</span>
             <span className="font-mono-tabular">
-              {cur} {subtotal.toFixed(2)}
+              {formatMoney(subtotal, settings)}
             </span>
           </div>
           <div className="flex justify-between text-amber-700 dark:text-amber-400">
             <span>Total Discounts</span>
             <span className="font-mono-tabular">
-              -{cur} {totalDiscount.toFixed(2)}
+              -{formatMoney(totalDiscount, settings)}
             </span>
           </div>
-          {!limitedAccess && (
+          {!shouldHideProfit && (
             <>
               <div className="flex justify-between text-slate-500 dark:text-slate-400">
                 <span>Total Cost</span>
                 <span className="font-mono-tabular">
-                  {cur} {totalCost.toFixed(2)}
+                  {formatMoney(totalCost, settings)}
                 </span>
               </div>
               <div className="flex justify-between font-semibold text-slate-700 dark:text-slate-200">
@@ -1078,7 +1083,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
                       : 'text-red-700 dark:text-red-400'
                   }`}
                 >
-                  {cur} {netProfit.toFixed(2)}
+                  {formatMoney(netProfit, settings)}
                 </span>
               </div>
             </>
@@ -1088,7 +1093,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
               Net Payable
             </span>
             <span className="font-mono-tabular text-base font-bold text-[#0D7A5F] dark:text-emerald-400">
-              {cur} {netPayable.toFixed(2)}
+              {formatMoney(netPayable, settings)}
             </span>
           </div>
         </div>
@@ -1239,7 +1244,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
             <p className="truncate font-mono-tabular text-sm font-bold text-slate-900 dark:text-slate-100">
               Net Payable:{' '}
               <span className="text-[#0D7A5F] dark:text-emerald-400">
-                {cur} {netPayable.toFixed(2)}
+                {formatMoney(netPayable, settings)}
               </span>
             </p>
           </div>
@@ -1316,7 +1321,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
             >
               <Printer className="h-4 w-4" />
               <span>
-                Complete &amp; Print · {cur} {netPayable.toFixed(2)}
+                Complete &amp; Print · {formatMoney(netPayable, settings)}
               </span>
             </button>
           </div>
@@ -1432,8 +1437,8 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
 
             <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-5 py-3 dark:border-slate-800 dark:bg-slate-950/60">
               <span className="font-mono-tabular text-xs text-slate-600 dark:text-slate-400">
-                Cart: {formatQty(totalUnitsInCart)} units · {cur}{' '}
-                {netPayable.toFixed(2)}
+                Cart: {formatQty(totalUnitsInCart)} units ·{' '}
+                {formatMoney(netPayable, settings)}
               </span>
               <button
                 type="button"

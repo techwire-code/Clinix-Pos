@@ -17,16 +17,23 @@ import {
   YAxis,
 } from 'recharts';
 import {
+  PharmacySettings,
   PrinterConfig,
   SaleRecord,
   ThermalWidth,
 } from '../types/pharmacy';
+import {
+  formatDateBySettings,
+  formatMoney,
+  getCurrencyLabel,
+} from '../services/localDb';
 import { downloadA5InvoicePdf, shareInvoiceSummary } from '../services/a5PdfGenerator';
 import { ThemeMode } from '../services/themeService';
 
 interface PrinterAndSalesWorkspaceProps {
   sales: SaleRecord[];
   printerConfig: PrinterConfig;
+  settings?: PharmacySettings;
   theme?: ThemeMode;
   onUpdatePrinterConfig: (next: PrinterConfig) => void;
   onOpenInvoiceModal: (sale: SaleRecord) => void;
@@ -43,11 +50,13 @@ export const PrinterAndSalesWorkspace: React.FC<
 > = ({
   sales,
   printerConfig,
+  settings,
   theme = 'light',
   onUpdatePrinterConfig,
   onOpenInvoiceModal,
 }) => {
   const isDark = theme === 'dark';
+  const cur = getCurrencyLabel(settings);
   const [isScanning, setIsScanning] = useState(false);
   const [btStatus, setBtStatus] = useState<string | null>(null);
   const [devices, setDevices] = useState(SIMULATED_BLUETOOTH_DEVICES);
@@ -92,11 +101,7 @@ export const PrinterAndSalesWorkspace: React.FC<
       }
     }
 
-    const formattedDate = now.toLocaleDateString('en-PK', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
+    const formattedDate = formatDateBySettings(now, settings);
 
     return {
       formattedDate,
@@ -250,7 +255,7 @@ export const PrinterAndSalesWorkspace: React.FC<
               Total Daily Revenue
             </p>
             <p className="mt-1.5 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
-              PKR {dailySummary.dailyRevenue.toFixed(2)}
+              {formatMoney(dailySummary.dailyRevenue, settings)}
             </p>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Net billed amount today
@@ -309,7 +314,7 @@ export const PrinterAndSalesWorkspace: React.FC<
             Net Sales Collected
           </p>
           <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
-            PKR {totals.grossSales.toFixed(2)}
+            {formatMoney(totals.grossSales, settings)}
           </p>
           <p className="mt-0.5 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
             {sales.length} completed invoices
@@ -320,7 +325,7 @@ export const PrinterAndSalesWorkspace: React.FC<
             Discounts Granted
           </p>
           <p className="mt-1 font-mono-tabular text-2xl font-bold text-amber-700 dark:text-amber-400">
-            PKR {totals.totalDiscounts.toFixed(2)}
+            {formatMoney(totals.totalDiscounts, settings)}
           </p>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             Deducted from gross margin
@@ -331,7 +336,7 @@ export const PrinterAndSalesWorkspace: React.FC<
             Actual Net Profit
           </p>
           <p className="mt-1 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
-            PKR {totals.totalProfit.toFixed(2)}
+            {formatMoney(totals.totalProfit, settings)}
           </p>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             After subtracting cost & discounts
@@ -362,7 +367,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                 7-Day Total:{' '}
               </span>
               <span className="font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                PKR {sevenDayProfitData.total7DayProfit.toFixed(2)}
+                {formatMoney(sevenDayProfitData.total7DayProfit, settings)}
               </span>
             </div>
             <span
@@ -376,7 +381,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                 Daily Avg:{' '}
               </span>
               <span className="font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                PKR {sevenDayProfitData.avgDailyProfit.toFixed(2)}
+                {formatMoney(sevenDayProfitData.avgDailyProfit, settings)}
               </span>
             </div>
           </div>
@@ -418,7 +423,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                 axisLine={false}
                 tickLine={false}
                 width={62}
-                tickFormatter={(val: number) => `Rs ${val}`}
+                tickFormatter={(val: number) => `${cur} ${val}`}
               />
               <Tooltip
                 content={({ active, payload }) => {
@@ -435,10 +440,10 @@ export const PrinterAndSalesWorkspace: React.FC<
                         {point.label}
                       </p>
                       <p className="mt-1 font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                        Net Profit: PKR {point.netProfit.toFixed(2)}
+                        Net Profit: {formatMoney(point.netProfit, settings)}
                       </p>
                       <p className="mt-0.5 font-mono-tabular text-slate-600 dark:text-slate-300">
-                        Revenue: PKR {point.revenue.toFixed(2)}
+                        Revenue: {formatMoney(point.revenue, settings)}
                       </p>
                       <p className="mt-0.5 font-mono-tabular text-slate-500 dark:text-slate-400">
                         {point.transactions}{' '}
@@ -502,7 +507,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                         {sale.invoiceNumber}
                       </p>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        {new Date(sale.createdAt).toLocaleDateString('en-PK')}
+                        {formatDateBySettings(sale.createdAt, settings)}
                       </p>
                     </td>
                     <td className="px-4 py-3">
@@ -510,11 +515,11 @@ export const PrinterAndSalesWorkspace: React.FC<
                         {sale.partyName}
                       </p>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        {sale.paymentMode} · Disc -{sale.discountAmount.toFixed(0)}
+                        {sale.paymentMode} · Disc -{formatMoney(sale.discountAmount, settings)}
                       </p>
                     </td>
                     <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                      PKR {sale.netPayable.toFixed(2)}
+                      {formatMoney(sale.netPayable, settings)}
                     </td>
                     <td
                       className={`px-4 py-3 text-right font-mono-tabular font-semibold ${
@@ -523,7 +528,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                           : 'text-red-700 dark:text-red-400'
                       }`}
                     >
-                      PKR {sale.netProfit.toFixed(2)}
+                      {formatMoney(sale.netProfit, settings)}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-1">
@@ -537,7 +542,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                         </button>
                         <button
                           type="button"
-                          onClick={() => downloadA5InvoicePdf(sale)}
+                          onClick={() => downloadA5InvoicePdf(sale, settings)}
                           title="Download A5 PDF"
                           className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
@@ -545,7 +550,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                         </button>
                         <button
                           type="button"
-                          onClick={() => void shareInvoiceSummary(sale)}
+                          onClick={() => void shareInvoiceSummary(sale, settings)}
                           title="Share via WhatsApp / Email"
                           className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                         >

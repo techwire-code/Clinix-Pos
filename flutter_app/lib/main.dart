@@ -5,6 +5,7 @@ import 'models/pharmacy_models.dart';
 import 'screens/pos_screen.dart';
 import 'screens/printer_settings_screen.dart';
 import 'screens/settings_screen.dart';
+import 'utils/currency_formatter.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -117,7 +118,7 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _settings.branchAddress,
+                  _settings.address,
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.grey.shade600,
@@ -125,7 +126,7 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Role: ${_settings.activeUserRole.label} · ${_settings.currencyLabel}',
+                  'Role: ${_settings.activeUserRole.label} · ${CurrencyFormatter.unitLabel(_settings)}',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,

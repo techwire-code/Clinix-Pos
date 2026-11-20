@@ -49,6 +49,7 @@ import {
   saveParties,
   savePrinterConfig,
   saveSettings,
+  toThermalWidth,
 } from './services/localDb';
 import {
   isManagerOrAdminRole,
@@ -421,7 +422,7 @@ export default function App() {
       ...settings,
       savedPrinterName: next.deviceName,
       savedPrinterMac: next.macAddress,
-      paperWidth: next.paperWidth,
+      thermalPaperWidth: next.paperWidth === '58mm' ? 58 : 80,
       autoPrintReceipt: next.autoPrintOnSale,
     });
     setSettings(updatedSettings);
@@ -434,7 +435,7 @@ export default function App() {
     setPrinterConfig({
       deviceName: saved.savedPrinterName || 'Thermal Printer',
       macAddress: saved.savedPrinterMac,
-      paperWidth: saved.paperWidth,
+      paperWidth: toThermalWidth(saved.thermalPaperWidth),
       autoPrintOnSale: saved.autoPrintReceipt,
     });
   };
@@ -446,7 +447,7 @@ export default function App() {
     setPrinterConfig({
       deviceName: restored.savedPrinterName,
       macAddress: restored.savedPrinterMac,
-      paperWidth: restored.paperWidth,
+      paperWidth: toThermalWidth(restored.thermalPaperWidth),
       autoPrintOnSale: restored.autoPrintReceipt,
     });
   };
@@ -523,7 +524,7 @@ export default function App() {
             {settings.pharmacyName}
           </h1>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            {settings.branchAddress}
+            {settings.address}
           </p>
         </div>
 
@@ -754,6 +755,7 @@ export default function App() {
               parties={parties}
               sales={sales}
               purchases={purchases}
+              settings={settings}
               theme={theme}
               onGoToPos={() => setActiveTab('pos')}
               onNavigateTab={(tab) => setActiveTab(tab)}
@@ -771,6 +773,10 @@ export default function App() {
               limitedAccess={
                 isLimitedUser || !isManagerOrAdminRole(settings.activeRole)
               }
+              hideCostAndProfit={
+                (isLimitedUser || !isManagerOrAdminRole(settings.activeRole)) &&
+                !settings.showProfitToStaff
+              }
               settings={settings}
               onCompleteSale={handleCompleteSale}
             />
@@ -781,7 +787,8 @@ export default function App() {
               items={items}
               readOnly={isLimitedUser}
               defaultLowStockThreshold={settings.lowStockThreshold}
-              nearExpiryDays={settings.nearExpiryDays}
+              nearExpiryDays={settings.expiryAlertDays}
+              settings={settings}
               onSaveItem={handleSaveItem}
               onDeleteItem={handleDeleteItem}
               onImportItems={handleImportItems}
@@ -792,6 +799,7 @@ export default function App() {
             <MyReceiptsWorkspace
               sales={mySales}
               staffName={session.displayName}
+              settings={settings}
               onOpenInvoiceModal={(sale) => {
                 setShouldAutoPrintInvoice(false);
                 setActiveInvoice(sale);
@@ -804,6 +812,7 @@ export default function App() {
               items={items}
               parties={parties}
               purchases={purchases}
+              settings={settings}
               onCompletePurchase={handleCompletePurchase}
               onAddSupplier={handleAddSupplier}
               onSettleSupplierBalance={handleSettleBalance}
@@ -813,6 +822,7 @@ export default function App() {
           {!isLimitedUser && resolvedActiveTab === 'parties' && (
             <PartiesWorkspace
               parties={parties}
+              settings={settings}
               onAddParty={handleAddParty}
               onSettleBalance={handleSettleBalance}
             />
@@ -822,6 +832,7 @@ export default function App() {
             <ReportsAndExpensesWorkspace
               sales={sales}
               expenses={expenses}
+              settings={settings}
               theme={theme}
               onAddExpense={handleAddExpense}
               onDeleteExpense={handleDeleteExpense}
@@ -836,6 +847,7 @@ export default function App() {
             <PrinterAndSalesWorkspace
               sales={sales}
               printerConfig={printerConfig}
+              settings={settings}
               theme={theme}
               onUpdatePrinterConfig={handleUpdatePrinterConfig}
               onOpenInvoiceModal={(sale) => {
@@ -867,7 +879,7 @@ export default function App() {
       {activeInvoice && (
         <InvoiceModal
           sale={activeInvoice}
-          defaultWidth={settings.paperWidth}
+          defaultWidth={toThermalWidth(settings.thermalPaperWidth)}
           settings={settings}
           autoPrint={shouldAutoPrintInvoice}
           onClose={() => {

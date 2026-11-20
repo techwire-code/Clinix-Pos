@@ -15,20 +15,45 @@ export type UserRole = 'admin' | 'manager' | 'cashier' | 'sales' | 'user';
 
 export type CounterRole = 'admin' | 'manager' | 'cashier' | 'sales';
 
+export type DecimalDigits = 0 | 2 | 3;
+
+export type SymbolPosition = 'prefix' | 'suffix';
+
+export type DateFormatOption = 'DD/MM/YYYY' | 'MM/DD/YYYY';
+
+export interface CurrencyPreset {
+  code: string;
+  symbol: string;
+  label: string;
+  name: string;
+  decimalDigits: DecimalDigits;
+  symbolPosition: SymbolPosition;
+  defaultTimezone: string;
+}
+
 export interface PharmacySettings {
   pharmacyName: string;
-  branchAddress: string;
-  phoneNumber: string;
+  address: string;
+  phone: string;
   licenseNumber: string;
-  receiptFooterNote: string;
+  websiteUrl: string;
+  receiptFooter: string;
   autoPrintReceipt: boolean;
   savedPrinterName: string;
   savedPrinterMac: string;
-  paperWidth: ThermalWidth;
+  thermalPaperWidth: 58 | 80;
+  showWebsiteOnReceipt: boolean;
   preferUsbScannerFocus: boolean;
-  currencyLabel: string;
+  currencyCode: string;
+  currencySymbol: string;
+  useSymbolInsteadOfCode: boolean;
+  decimalDigits: DecimalDigits;
+  symbolPosition: SymbolPosition;
+  timezone: string;
+  dateFormat: DateFormatOption;
   lowStockThreshold: number;
-  nearExpiryDays: number;
+  expiryAlertDays: number;
+  showProfitToStaff: boolean;
   activeRole: CounterRole;
 }
 

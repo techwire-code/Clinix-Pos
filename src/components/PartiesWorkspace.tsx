@@ -1,18 +1,22 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Users, X } from 'lucide-react';
-import { Party, PartyType } from '../types/pharmacy';
+import { Party, PartyType, PharmacySettings } from '../types/pharmacy';
+import { formatMoney, getCurrencyLabel } from '../services/localDb';
 
 interface PartiesWorkspaceProps {
   parties: Party[];
+  settings?: PharmacySettings;
   onAddParty: (party: Omit<Party, 'id'>) => void;
   onSettleBalance: (partyId: number, amount: number) => void;
 }
 
 export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
   parties,
+  settings,
   onAddParty,
   onSettleBalance,
 }) => {
+  const cur = getCurrencyLabel(settings);
   const [activeType, setActiveType] = useState<PartyType>('customer');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [settleTarget, setSettleTarget] = useState<Party | null>(null);
@@ -73,7 +77,7 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
             Total To Collect (Customer Credit)
           </p>
           <p className="mt-1 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
-            PKR {totals.toCollect.toLocaleString()}
+            {formatMoney(totals.toCollect, settings)}
           </p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Receivable from local clinic & credit patients
@@ -85,7 +89,7 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
             Total To Pay (Distributor Payables)
           </p>
           <p className="mt-1 font-mono-tabular text-2xl font-bold text-amber-700 dark:text-amber-400">
-            PKR {totals.toPay.toLocaleString()}
+            {formatMoney(totals.toPay, settings)}
           </p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Outstanding balance to wholesale pharmaceutical suppliers
@@ -170,7 +174,7 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                       : 'text-slate-500 dark:text-slate-400'
                   }`}
                 >
-                  PKR {party.balance.toFixed(2)}
+                  {formatMoney(party.balance, settings)}
                 </td>
                 <td className="px-5 py-3.5 text-right">
                   {party.balance > 0 ? (
@@ -261,7 +265,7 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                  Opening Balance (PKR)
+                  Opening Balance ({cur})
                 </label>
                 <input
                   type="number"
@@ -308,14 +312,14 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                 : 'Record Supplier Payment'}
             </h3>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              {settleTarget.name} · Current Balance: PKR{' '}
+              {settleTarget.name} · Current Balance:{' '}
               <span className="font-mono-tabular font-semibold text-slate-700 dark:text-slate-200">
-                {settleTarget.balance.toFixed(2)}
+                {formatMoney(settleTarget.balance, settings)}
               </span>
             </p>
             <div className="mt-4">
               <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Amount (PKR)
+                Amount ({cur})
               </label>
               <input
                 required

@@ -580,125 +580,315 @@ class PurchaseItemRecord {
 
 class PharmacySettings {
   final String pharmacyName;
-  final String branchAddress;
-  final String phoneNumber;
+  final String address;
+  final String phone;
   final String licenseNumber;
-  final String receiptFooterNote;
+  final String websiteUrl;
+  final String receiptFooter;
   final bool autoPrintReceipt;
   final String? savedPrinterName;
   final String? savedPrinterMac;
-  final int paperWidthMm; // 58 or 80
+  final int thermalPaperWidth; // 58 or 80
+  final bool showWebsiteOnReceipt;
   final bool preferUsbScannerFocus;
-  final String currencyLabel;
+
+  // Currency & Regional Settings
+  final String currencyCode;
+  final String currencySymbol;
+  final bool useSymbolInsteadOfCode;
+  final int decimalDigits; // 0, 2, or 3
+  final String symbolPosition; // 'prefix' or 'suffix'
+  final String timezone;
+  final String dateFormat; // 'DD/MM/YYYY' or 'MM/DD/YYYY'
+
+  // Counter & Role Display Options
   final int lowStockThreshold;
-  final int nearExpiryDays;
+  final int expiryAlertDays;
+  final bool showProfitToStaff;
   final UserRole activeUserRole;
 
   const PharmacySettings({
     this.pharmacyName = 'Clinix Community Pharmacy',
-    this.branchAddress = '17 KM Ferozepur Road, Lahore',
-    this.phoneNumber = '+92 300 0000000',
-    this.licenseNumber = 'DL-LHR-0000',
-    this.receiptFooterNote =
-        'Unopened medicines with original bill may be exchanged within 7 days. Thank you!',
-    this.autoPrintReceipt = false,
+    this.address = '17 KM Ferozepur Road, Lahore',
+    this.phone = '+92 42 35950011',
+    this.licenseNumber = 'DL-LHR-04892',
+    this.websiteUrl = '',
+    this.receiptFooter =
+        'Unopened medicines with original invoice may be exchanged within 7 days.',
+    this.autoPrintReceipt = true,
     this.savedPrinterName,
     this.savedPrinterMac,
-    this.paperWidthMm = 80,
+    this.thermalPaperWidth = 80,
+    this.showWebsiteOnReceipt = false,
     this.preferUsbScannerFocus = true,
-    this.currencyLabel = 'PKR',
+    this.currencyCode = 'PKR',
+    this.currencySymbol = 'Rs',
+    this.useSymbolInsteadOfCode = false,
+    this.decimalDigits = 2,
+    this.symbolPosition = 'prefix',
+    this.timezone = 'Asia/Karachi',
+    this.dateFormat = 'DD/MM/YYYY',
     this.lowStockThreshold = 10,
-    this.nearExpiryDays = 60,
+    this.expiryAlertDays = 30,
+    this.showProfitToStaff = false,
     this.activeUserRole = UserRole.admin,
   });
+
+  // Backward-compatibility getters for existing callers
+  String get branchAddress => address;
+  String get phoneNumber => phone;
+  String get receiptFooterNote => receiptFooter;
+  int get paperWidthMm => thermalPaperWidth;
+  String get currencyLabel =>
+      useSymbolInsteadOfCode ? currencySymbol : currencyCode;
+  int get nearExpiryDays => expiryAlertDays;
 
   factory PharmacySettings.defaults() => const PharmacySettings();
 
   PharmacySettings copyWith({
     String? pharmacyName,
-    String? branchAddress,
-    String? phoneNumber,
+    String? address,
+    String? phone,
     String? licenseNumber,
-    String? receiptFooterNote,
+    String? websiteUrl,
+    String? receiptFooter,
     bool? autoPrintReceipt,
     String? savedPrinterName,
     String? savedPrinterMac,
     bool clearSavedPrinter = false,
-    int? paperWidthMm,
+    int? thermalPaperWidth,
+    bool? showWebsiteOnReceipt,
     bool? preferUsbScannerFocus,
-    String? currencyLabel,
+    String? currencyCode,
+    String? currencySymbol,
+    bool? useSymbolInsteadOfCode,
+    int? decimalDigits,
+    String? symbolPosition,
+    String? timezone,
+    String? dateFormat,
     int? lowStockThreshold,
-    int? nearExpiryDays,
+    int? expiryAlertDays,
+    bool? showProfitToStaff,
     UserRole? activeUserRole,
   }) {
     return PharmacySettings(
       pharmacyName: pharmacyName ?? this.pharmacyName,
-      branchAddress: branchAddress ?? this.branchAddress,
-      phoneNumber: phoneNumber ?? this.phoneNumber,
+      address: address ?? this.address,
+      phone: phone ?? this.phone,
       licenseNumber: licenseNumber ?? this.licenseNumber,
-      receiptFooterNote: receiptFooterNote ?? this.receiptFooterNote,
+      websiteUrl: websiteUrl ?? this.websiteUrl,
+      receiptFooter: receiptFooter ?? this.receiptFooter,
       autoPrintReceipt: autoPrintReceipt ?? this.autoPrintReceipt,
       savedPrinterName: clearSavedPrinter
           ? null
           : (savedPrinterName ?? this.savedPrinterName),
       savedPrinterMac:
           clearSavedPrinter ? null : (savedPrinterMac ?? this.savedPrinterMac),
-      paperWidthMm: paperWidthMm ?? this.paperWidthMm,
+      thermalPaperWidth: thermalPaperWidth ?? this.thermalPaperWidth,
+      showWebsiteOnReceipt: showWebsiteOnReceipt ?? this.showWebsiteOnReceipt,
       preferUsbScannerFocus:
           preferUsbScannerFocus ?? this.preferUsbScannerFocus,
-      currencyLabel: currencyLabel ?? this.currencyLabel,
+      currencyCode: currencyCode ?? this.currencyCode,
+      currencySymbol: currencySymbol ?? this.currencySymbol,
+      useSymbolInsteadOfCode:
+          useSymbolInsteadOfCode ?? this.useSymbolInsteadOfCode,
+      decimalDigits: decimalDigits ?? this.decimalDigits,
+      symbolPosition: symbolPosition ?? this.symbolPosition,
+      timezone: timezone ?? this.timezone,
+      dateFormat: dateFormat ?? this.dateFormat,
       lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
-      nearExpiryDays: nearExpiryDays ?? this.nearExpiryDays,
+      expiryAlertDays: expiryAlertDays ?? this.expiryAlertDays,
+      showProfitToStaff: showProfitToStaff ?? this.showProfitToStaff,
       activeUserRole: activeUserRole ?? this.activeUserRole,
     );
   }
 
-  Map<String, dynamic> toMap() => {
-        'id': 1,
-        'pharmacy_name': pharmacyName,
-        'branch_address': branchAddress,
-        'phone_number': phoneNumber,
-        'license_number': licenseNumber,
-        'receipt_footer_note': receiptFooterNote,
-        'auto_print_receipt': autoPrintReceipt ? 1 : 0,
-        'saved_printer_name': savedPrinterName,
-        'saved_printer_mac': savedPrinterMac,
-        'paper_width_mm': paperWidthMm == 58 ? 58 : 80,
-        'prefer_usb_scanner_focus': preferUsbScannerFocus ? 1 : 0,
-        'currency_label':
-            currencyLabel.trim().isEmpty ? 'PKR' : currencyLabel.trim(),
-        'low_stock_threshold': lowStockThreshold < 1 ? 1 : lowStockThreshold,
-        'near_expiry_days': nearExpiryDays < 1 ? 1 : nearExpiryDays,
-        'active_user_role': activeUserRole.dbValue,
-        'updated_at': DateTime.now().toIso8601String(),
+  Map<String, dynamic> toMap() {
+    final cleanCode =
+        currencyCode.trim().isEmpty ? 'PKR' : currencyCode.trim().toUpperCase();
+    final cleanSymbol =
+        currencySymbol.trim().isEmpty ? 'Rs' : currencySymbol.trim();
+    final cleanDigits =
+        (decimalDigits == 0 || decimalDigits == 2 || decimalDigits == 3)
+            ? decimalDigits
+            : 2;
+    final cleanPos = symbolPosition == 'suffix' ? 'suffix' : 'prefix';
+    final cleanDateFmt =
+        dateFormat == 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY';
+    final cleanWidth = thermalPaperWidth == 58 ? 58 : 80;
+    final cleanLow = lowStockThreshold < 1 ? 1 : lowStockThreshold;
+    final cleanExp = expiryAlertDays < 1 ? 1 : expiryAlertDays;
+
+    return {
+      'id': 1,
+      'pharmacy_name': pharmacyName,
+      // Keep both legacy and unified columns synchronized for seamless migrations
+      'branch_address': address,
+      'address': address,
+      'phone_number': phone,
+      'phone': phone,
+      'license_number': licenseNumber,
+      'website_url': websiteUrl,
+      'receipt_footer_note': receiptFooter,
+      'receipt_footer': receiptFooter,
+      'auto_print_receipt': autoPrintReceipt ? 1 : 0,
+      'saved_printer_name': savedPrinterName,
+      'saved_printer_mac': savedPrinterMac,
+      'paper_width_mm': cleanWidth,
+      'thermal_paper_width': cleanWidth,
+      'show_website_on_receipt': showWebsiteOnReceipt ? 1 : 0,
+      'prefer_usb_scanner_focus': preferUsbScannerFocus ? 1 : 0,
+      'currency_label': cleanCode,
+      'currency_code': cleanCode,
+      'currency_symbol': cleanSymbol,
+      'use_symbol_instead_of_code': useSymbolInsteadOfCode ? 1 : 0,
+      'decimal_digits': cleanDigits,
+      'symbol_position': cleanPos,
+      'timezone': timezone.trim().isEmpty ? 'Asia/Karachi' : timezone.trim(),
+      'date_format': cleanDateFmt,
+      'low_stock_threshold': cleanLow,
+      'near_expiry_days': cleanExp,
+      'expiry_alert_days': cleanExp,
+      'show_profit_to_staff': showProfitToStaff ? 1 : 0,
+      'active_user_role': activeUserRole.dbValue,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+  }
+
+  Map<String, dynamic> toJson() => {
+        'pharmacyName': pharmacyName,
+        'address': address,
+        'phone': phone,
+        'licenseNumber': licenseNumber,
+        'websiteUrl': websiteUrl,
+        'receiptFooter': receiptFooter,
+        'autoPrintReceipt': autoPrintReceipt,
+        'savedPrinterName': savedPrinterName,
+        'savedPrinterMac': savedPrinterMac,
+        'thermalPaperWidth': thermalPaperWidth == 58 ? 58 : 80,
+        'showWebsiteOnReceipt': showWebsiteOnReceipt,
+        'preferUsbScannerFocus': preferUsbScannerFocus,
+        'currencyCode': currencyCode,
+        'currencySymbol': currencySymbol,
+        'useSymbolInsteadOfCode': useSymbolInsteadOfCode,
+        'decimalDigits': decimalDigits,
+        'symbolPosition': symbolPosition,
+        'timezone': timezone,
+        'dateFormat': dateFormat,
+        'lowStockThreshold': lowStockThreshold,
+        'expiryAlertDays': expiryAlertDays,
+        'showProfitToStaff': showProfitToStaff,
+        'activeUserRole': activeUserRole.dbValue,
       };
 
+  static bool _parseBool(dynamic value, {required bool fallback}) {
+    if (value is bool) return value;
+    if (value is num) return value.toInt() == 1;
+    if (value is String) {
+      if (value == '1' || value.toLowerCase() == 'true') return true;
+      if (value == '0' || value.toLowerCase() == 'false') return false;
+    }
+    return fallback;
+  }
+
   factory PharmacySettings.fromMap(Map<String, dynamic> map) {
-    final widthRaw = (map['paper_width_mm'] as num?)?.toInt() ?? 80;
-    final lowRaw = (map['low_stock_threshold'] as num?)?.toInt() ?? 10;
-    final expRaw = (map['near_expiry_days'] as num?)?.toInt() ?? 60;
-    final curRaw = (map['currency_label'] as String?)?.trim();
+    final nameRaw = (map['pharmacy_name'] ?? map['pharmacyName']) as String?;
+    final addrRaw =
+        (map['address'] ?? map['branch_address'] ?? map['branchAddress'])
+            as String?;
+    final phoneRaw =
+        (map['phone'] ?? map['phone_number'] ?? map['phoneNumber']) as String?;
+    final licRaw = (map['license_number'] ?? map['licenseNumber']) as String?;
+    final webRaw = (map['website_url'] ?? map['websiteUrl']) as String?;
+    final footerRaw =
+        (map['receipt_footer'] ??
+            map['receipt_footer_note'] ??
+            map['receiptFooterNote']) as String?;
+
+    final widthRaw = ((map['thermal_paper_width'] ??
+                map['paper_width_mm'] ??
+                map['paperWidthMm']) as num?)
+            ?.toInt() ??
+        80;
+    final lowRaw =
+        ((map['low_stock_threshold'] ?? map['lowStockThreshold']) as num?)
+                ?.toInt() ??
+            10;
+    final expRaw = ((map['expiry_alert_days'] ??
+                map['near_expiry_days'] ??
+                map['expiryAlertDays']) as num?)
+            ?.toInt() ??
+        30;
+
+    final codeRaw = ((map['currency_code'] ??
+                map['currency_label'] ??
+                map['currencyCode']) as String?)
+            ?.trim();
+    final symRaw =
+        ((map['currency_symbol'] ?? map['currencySymbol']) as String?)?.trim();
+    final digitsRaw =
+        ((map['decimal_digits'] ?? map['decimalDigits']) as num?)?.toInt() ?? 2;
+    final posRaw =
+        (map['symbol_position'] ?? map['symbolPosition']) as String?;
+    final tzRaw = (map['timezone'] as String?)?.trim();
+    final dateFmtRaw = (map['date_format'] ?? map['dateFormat']) as String?;
+
     return PharmacySettings(
-      pharmacyName: ((map['pharmacy_name'] as String?)?.trim().isNotEmpty ?? false)
-          ? (map['pharmacy_name'] as String).trim()
+      pharmacyName: (nameRaw != null && nameRaw.trim().isNotEmpty)
+          ? nameRaw.trim()
           : 'Clinix Community Pharmacy',
-      branchAddress:
-          ((map['branch_address'] as String?)?.trim().isNotEmpty ?? false)
-              ? (map['branch_address'] as String).trim()
-              : '17 KM Ferozepur Road, Lahore',
-      phoneNumber: (map['phone_number'] as String?) ?? '',
-      licenseNumber: (map['license_number'] as String?) ?? '',
-      receiptFooterNote: (map['receipt_footer_note'] as String?) ?? '',
-      autoPrintReceipt: ((map['auto_print_receipt'] as num?)?.toInt() ?? 0) == 1,
-      savedPrinterName: map['saved_printer_name'] as String?,
-      savedPrinterMac: map['saved_printer_mac'] as String?,
-      paperWidthMm: widthRaw == 58 ? 58 : 80,
-      preferUsbScannerFocus:
-          ((map['prefer_usb_scanner_focus'] as num?)?.toInt() ?? 1) == 1,
-      currencyLabel: (curRaw != null && curRaw.isNotEmpty) ? curRaw : 'PKR',
+      address: (addrRaw != null && addrRaw.trim().isNotEmpty)
+          ? addrRaw.trim()
+          : '17 KM Ferozepur Road, Lahore',
+      phone: phoneRaw?.trim() ?? '+92 42 35950011',
+      licenseNumber: licRaw?.trim() ?? 'DL-LHR-04892',
+      websiteUrl: webRaw?.trim() ?? '',
+      receiptFooter: footerRaw ??
+          'Unopened medicines with original invoice may be exchanged within 7 days.',
+      autoPrintReceipt: _parseBool(
+        map['auto_print_receipt'] ?? map['autoPrintReceipt'],
+        fallback: true,
+      ),
+      savedPrinterName:
+          (map['saved_printer_name'] ?? map['savedPrinterName']) as String?,
+      savedPrinterMac:
+          (map['saved_printer_mac'] ?? map['savedPrinterMac']) as String?,
+      thermalPaperWidth: widthRaw == 58 ? 58 : 80,
+      showWebsiteOnReceipt: _parseBool(
+        map['show_website_on_receipt'] ?? map['showWebsiteOnReceipt'],
+        fallback: false,
+      ),
+      preferUsbScannerFocus: _parseBool(
+        map['prefer_usb_scanner_focus'] ?? map['preferUsbScannerFocus'],
+        fallback: true,
+      ),
+      currencyCode: (codeRaw != null && codeRaw.isNotEmpty)
+          ? codeRaw.toUpperCase()
+          : 'PKR',
+      currencySymbol:
+          (symRaw != null && symRaw.isNotEmpty) ? symRaw : 'Rs',
+      useSymbolInsteadOfCode: _parseBool(
+        map['use_symbol_instead_of_code'] ?? map['useSymbolInsteadOfCode'],
+        fallback: false,
+      ),
+      decimalDigits:
+          (digitsRaw == 0 || digitsRaw == 2 || digitsRaw == 3) ? digitsRaw : 2,
+      symbolPosition: posRaw == 'suffix' ? 'suffix' : 'prefix',
+      timezone: (tzRaw != null && tzRaw.isNotEmpty) ? tzRaw : 'Asia/Karachi',
+      dateFormat:
+          dateFmtRaw == 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY',
       lowStockThreshold: lowRaw < 1 ? 1 : lowRaw,
-      nearExpiryDays: expRaw < 1 ? 1 : expRaw,
-      activeUserRole: UserRoleX.fromDb(map['active_user_role'] as String?),
+      expiryAlertDays: expRaw < 1 ? 1 : expRaw,
+      showProfitToStaff: _parseBool(
+        map['show_profit_to_staff'] ?? map['showProfitToStaff'],
+        fallback: false,
+      ),
+      activeUserRole: UserRoleX.fromDb(
+        (map['active_user_role'] ?? map['activeUserRole']) as String?,
+      ),
     );
   }
+
+  factory PharmacySettings.fromJson(Map<String, dynamic> json) =>
+      PharmacySettings.fromMap(json);
 }

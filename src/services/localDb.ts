@@ -8,6 +8,9 @@ import {
 } from '../data/seedData';
 import {
   CartLine,
+  CurrencyPreset,
+  DateFormatOption,
+  DecimalDigits,
   ExpenseRecord,
   Party,
   PaymentMode,
@@ -19,6 +22,8 @@ import {
   PurchaseRecord,
   SaleItemRecord,
   SaleRecord,
+  SymbolPosition,
+  ThermalWidth,
 } from '../types/pharmacy';
 
 const STORAGE_KEYS = {
@@ -32,23 +37,234 @@ const STORAGE_KEYS = {
   lowStockThreshold: 'clinix_low_stock_threshold_v1',
 };
 
+export const CURRENCY_PRESETS: CurrencyPreset[] = [
+  {
+    code: 'PKR',
+    symbol: 'Rs',
+    label: 'PKR',
+    name: 'Pakistani Rupee',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'Asia/Karachi',
+  },
+  {
+    code: 'USD',
+    symbol: '$',
+    label: 'USD ($)',
+    name: 'US Dollar',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'America/New_York',
+  },
+  {
+    code: 'EUR',
+    symbol: '€',
+    label: 'EUR (€)',
+    name: 'Euro',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'Europe/Berlin',
+  },
+  {
+    code: 'GBP',
+    symbol: '£',
+    label: 'GBP (£)',
+    name: 'British Pound',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'Europe/London',
+  },
+  {
+    code: 'AED',
+    symbol: 'AED',
+    label: 'AED',
+    name: 'UAE Dirham',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'Asia/Dubai',
+  },
+  {
+    code: 'SAR',
+    symbol: 'SAR',
+    label: 'SAR',
+    name: 'Saudi Riyal',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'Asia/Riyadh',
+  },
+  {
+    code: 'INR',
+    symbol: '₹',
+    label: 'INR (₹)',
+    name: 'Indian Rupee',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'Asia/Kolkata',
+  },
+  {
+    code: 'CAD',
+    symbol: 'C$',
+    label: 'CAD ($)',
+    name: 'Canadian Dollar',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'America/Toronto',
+  },
+  {
+    code: 'AUD',
+    symbol: 'A$',
+    label: 'AUD ($)',
+    name: 'Australian Dollar',
+    decimalDigits: 2,
+    symbolPosition: 'prefix',
+    defaultTimezone: 'Australia/Sydney',
+  },
+];
+
+export const COMMON_TIMEZONES: string[] = [
+  'Asia/Karachi',
+  'Asia/Dubai',
+  'Asia/Riyadh',
+  'Asia/Kolkata',
+  'Europe/London',
+  'Europe/Berlin',
+  'America/New_York',
+  'America/Chicago',
+  'America/Toronto',
+  'Australia/Sydney',
+  'UTC',
+];
+
 export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
   pharmacyName: 'Clinix Community Pharmacy',
-  branchAddress: '17 KM Ferozepur Road, Lahore',
-  phoneNumber: '+92 42 35950011',
+  address: '17 KM Ferozepur Road, Lahore',
+  phone: '+92 42 35950011',
   licenseNumber: 'DL-LHR-04892',
-  receiptFooterNote:
+  websiteUrl: '',
+  receiptFooter:
     'Unopened medicines with original invoice may be exchanged within 7 days.',
-  autoPrintReceipt: DEFAULT_PRINTER_CONFIG.autoPrintOnSale,
+  autoPrintReceipt: true,
   savedPrinterName: DEFAULT_PRINTER_CONFIG.deviceName,
   savedPrinterMac: DEFAULT_PRINTER_CONFIG.macAddress,
-  paperWidth: DEFAULT_PRINTER_CONFIG.paperWidth,
+  thermalPaperWidth: DEFAULT_PRINTER_CONFIG.paperWidth === '58mm' ? 58 : 80,
+  showWebsiteOnReceipt: false,
   preferUsbScannerFocus: true,
-  currencyLabel: 'PKR',
+  currencyCode: 'PKR',
+  currencySymbol: 'Rs',
+  useSymbolInsteadOfCode: false,
+  decimalDigits: 2,
+  symbolPosition: 'prefix',
+  timezone: 'Asia/Karachi',
+  dateFormat: 'DD/MM/YYYY',
   lowStockThreshold: 10,
-  nearExpiryDays: 60,
+  expiryAlertDays: 30,
+  showProfitToStaff: false,
   activeRole: 'admin',
 };
+
+export function toThermalWidth(width: 58 | 80 | ThermalWidth | undefined): ThermalWidth {
+  if (width === 58 || width === '58mm') return '58mm';
+  return '80mm';
+}
+
+export function getCurrencyLabel(
+  settings?: Partial<PharmacySettings> | null,
+  asciiOnly = false,
+): string {
+  const code = (
+    settings?.currencyCode?.trim() ||
+    DEFAULT_PHARMACY_SETTINGS.currencyCode
+  ).toUpperCase();
+  const symbol =
+    settings?.currencySymbol?.trim() || DEFAULT_PHARMACY_SETTINGS.currencySymbol;
+  if (settings?.useSymbolInsteadOfCode) {
+    if (asciiOnly && /[^\x20-\x7E]/.test(symbol)) {
+      return code;
+    }
+    return symbol;
+  }
+  return code;
+}
+
+export function formatMoney(
+  amount: number,
+  settings?: Partial<PharmacySettings> | null,
+  options?: {
+    asciiOnly?: boolean;
+    grouping?: boolean;
+    decimals?: DecimalDigits;
+  },
+): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  const isNegative = safe < 0;
+  const absVal = Math.abs(safe);
+
+  const digits: DecimalDigits =
+    options?.decimals ??
+    (settings?.decimalDigits === 0 ||
+    settings?.decimalDigits === 2 ||
+    settings?.decimalDigits === 3
+      ? settings.decimalDigits
+      : DEFAULT_PHARMACY_SETTINGS.decimalDigits);
+
+  const useGrouping = options?.grouping !== false;
+  const numberPart = useGrouping
+    ? new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+      }).format(absVal)
+    : absVal.toFixed(digits);
+
+  const token = getCurrencyLabel(settings, options?.asciiOnly ?? false);
+  const position: SymbolPosition =
+    settings?.symbolPosition === 'suffix' ? 'suffix' : 'prefix';
+
+  // Attach single-character currency symbols ($ € £ ₹ ¥) tightly; space out multi-char tokens (PKR, Rs, AED)
+  const isCompactSymbol =
+    token.length === 1 || /[$€£₹¥]$/.test(token);
+  const sep = isCompactSymbol ? '' : ' ';
+
+  const combined =
+    position === 'suffix'
+      ? `${numberPart}${sep}${token}`
+      : `${token}${sep}${numberPart}`;
+
+  return isNegative ? `-${combined}` : combined;
+}
+
+export function formatDateBySettings(
+  isoOrDate: string | Date,
+  settings?: Partial<PharmacySettings> | null,
+  options?: { includeTime?: boolean },
+): string {
+  const dt = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(dt.getTime())) {
+    return typeof isoOrDate === 'string' ? isoOrDate : '';
+  }
+
+  const timeZone = settings?.timezone?.trim() || DEFAULT_PHARMACY_SETTINGS.timezone;
+  const dateFormat: DateFormatOption =
+    settings?.dateFormat === 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY';
+  const locale = dateFormat === 'MM/DD/YYYY' ? 'en-US' : 'en-GB';
+
+  const formatOpts: Intl.DateTimeFormatOptions = {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    ...(options?.includeTime
+      ? { hour: '2-digit', minute: '2-digit', hour12: true }
+      : {}),
+  };
+
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      ...formatOpts,
+      timeZone,
+    }).format(dt);
+  } catch {
+    return new Intl.DateTimeFormat(locale, formatOpts).format(dt);
+  }
+}
 
 const memoryFallbackStorage = new Map<string, string>();
 
@@ -186,8 +402,17 @@ export function savePrinterConfig(config: PrinterConfig): void {
   writeStorage(STORAGE_KEYS.printer, config);
 }
 
+interface LegacySettingsShape extends Partial<PharmacySettings> {
+  branchAddress?: string;
+  phoneNumber?: string;
+  receiptFooterNote?: string;
+  paperWidth?: ThermalWidth;
+  currencyLabel?: string;
+  nearExpiryDays?: number;
+}
+
 export function loadSettings(): PharmacySettings {
-  const existing = readStorage<Partial<PharmacySettings> | null>(
+  const existing = readStorage<LegacySettingsShape | null>(
     STORAGE_KEYS.settings,
     null,
   );
@@ -200,32 +425,50 @@ export function loadSettings(): PharmacySettings {
       existing.activeRole === 'sales'
         ? existing.activeRole
         : DEFAULT_PHARMACY_SETTINGS.activeRole;
+
+    const rawAddress = existing.address ?? existing.branchAddress;
+    const rawPhone = existing.phone ?? existing.phoneNumber;
+    const rawFooter = existing.receiptFooter ?? existing.receiptFooterNote;
+    const rawPaper = existing.thermalPaperWidth ?? existing.paperWidth;
+    const rawCurrency = existing.currencyCode ?? existing.currencyLabel;
+    const rawExpiry = existing.expiryAlertDays ?? existing.nearExpiryDays;
+
+    const decimalDigits: DecimalDigits =
+      existing.decimalDigits === 0 ||
+      existing.decimalDigits === 2 ||
+      existing.decimalDigits === 3
+        ? existing.decimalDigits
+        : DEFAULT_PHARMACY_SETTINGS.decimalDigits;
+
     return {
       pharmacyName:
         typeof existing.pharmacyName === 'string' && existing.pharmacyName.trim()
           ? existing.pharmacyName.trim()
           : DEFAULT_PHARMACY_SETTINGS.pharmacyName,
-      branchAddress:
-        typeof existing.branchAddress === 'string' &&
-        existing.branchAddress.trim()
-          ? existing.branchAddress.trim()
-          : DEFAULT_PHARMACY_SETTINGS.branchAddress,
-      phoneNumber:
-        typeof existing.phoneNumber === 'string'
-          ? existing.phoneNumber
-          : DEFAULT_PHARMACY_SETTINGS.phoneNumber,
+      address:
+        typeof rawAddress === 'string' && rawAddress.trim()
+          ? rawAddress.trim()
+          : DEFAULT_PHARMACY_SETTINGS.address,
+      phone:
+        typeof rawPhone === 'string'
+          ? rawPhone
+          : DEFAULT_PHARMACY_SETTINGS.phone,
       licenseNumber:
         typeof existing.licenseNumber === 'string'
           ? existing.licenseNumber
           : DEFAULT_PHARMACY_SETTINGS.licenseNumber,
-      receiptFooterNote:
-        typeof existing.receiptFooterNote === 'string'
-          ? existing.receiptFooterNote
-          : DEFAULT_PHARMACY_SETTINGS.receiptFooterNote,
+      websiteUrl:
+        typeof existing.websiteUrl === 'string'
+          ? existing.websiteUrl
+          : DEFAULT_PHARMACY_SETTINGS.websiteUrl,
+      receiptFooter:
+        typeof rawFooter === 'string'
+          ? rawFooter
+          : DEFAULT_PHARMACY_SETTINGS.receiptFooter,
       autoPrintReceipt:
         typeof existing.autoPrintReceipt === 'boolean'
           ? existing.autoPrintReceipt
-          : printer.autoPrintOnSale,
+          : DEFAULT_PHARMACY_SETTINGS.autoPrintReceipt,
       savedPrinterName:
         typeof existing.savedPrinterName === 'string'
           ? existing.savedPrinterName
@@ -234,64 +477,109 @@ export function loadSettings(): PharmacySettings {
         typeof existing.savedPrinterMac === 'string'
           ? existing.savedPrinterMac
           : printer.macAddress,
-      paperWidth:
-        existing.paperWidth === '58mm' || existing.paperWidth === '80mm'
-          ? existing.paperWidth
-          : printer.paperWidth,
+      thermalPaperWidth:
+        rawPaper === 58 || rawPaper === '58mm'
+          ? 58
+          : rawPaper === 80 || rawPaper === '80mm'
+            ? 80
+            : printer.paperWidth === '58mm'
+              ? 58
+              : 80,
+      showWebsiteOnReceipt:
+        typeof existing.showWebsiteOnReceipt === 'boolean'
+          ? existing.showWebsiteOnReceipt
+          : DEFAULT_PHARMACY_SETTINGS.showWebsiteOnReceipt,
       preferUsbScannerFocus:
         typeof existing.preferUsbScannerFocus === 'boolean'
           ? existing.preferUsbScannerFocus
           : DEFAULT_PHARMACY_SETTINGS.preferUsbScannerFocus,
-      currencyLabel:
-        typeof existing.currencyLabel === 'string' &&
-        existing.currencyLabel.trim()
-          ? existing.currencyLabel.trim().toUpperCase()
-          : DEFAULT_PHARMACY_SETTINGS.currencyLabel,
+      currencyCode:
+        typeof rawCurrency === 'string' && rawCurrency.trim()
+          ? rawCurrency.trim().toUpperCase()
+          : DEFAULT_PHARMACY_SETTINGS.currencyCode,
+      currencySymbol:
+        typeof existing.currencySymbol === 'string' &&
+        existing.currencySymbol.trim()
+          ? existing.currencySymbol.trim()
+          : DEFAULT_PHARMACY_SETTINGS.currencySymbol,
+      useSymbolInsteadOfCode:
+        typeof existing.useSymbolInsteadOfCode === 'boolean'
+          ? existing.useSymbolInsteadOfCode
+          : DEFAULT_PHARMACY_SETTINGS.useSymbolInsteadOfCode,
+      decimalDigits,
+      symbolPosition:
+        existing.symbolPosition === 'suffix' ? 'suffix' : 'prefix',
+      timezone:
+        typeof existing.timezone === 'string' && existing.timezone.trim()
+          ? existing.timezone.trim()
+          : DEFAULT_PHARMACY_SETTINGS.timezone,
+      dateFormat:
+        existing.dateFormat === 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY',
       lowStockThreshold:
         Number.isFinite(Number(existing.lowStockThreshold)) &&
         Number(existing.lowStockThreshold) >= 1
           ? Math.floor(Number(existing.lowStockThreshold))
           : DEFAULT_PHARMACY_SETTINGS.lowStockThreshold,
-      nearExpiryDays:
-        Number.isFinite(Number(existing.nearExpiryDays)) &&
-        Number(existing.nearExpiryDays) >= 1
-          ? Math.floor(Number(existing.nearExpiryDays))
-          : DEFAULT_PHARMACY_SETTINGS.nearExpiryDays,
+      expiryAlertDays:
+        Number.isFinite(Number(rawExpiry)) && Number(rawExpiry) >= 1
+          ? Math.floor(Number(rawExpiry))
+          : DEFAULT_PHARMACY_SETTINGS.expiryAlertDays,
+      showProfitToStaff:
+        typeof existing.showProfitToStaff === 'boolean'
+          ? existing.showProfitToStaff
+          : DEFAULT_PHARMACY_SETTINGS.showProfitToStaff,
       activeRole: safeRole,
     };
   }
 
   const seeded: PharmacySettings = {
     ...DEFAULT_PHARMACY_SETTINGS,
-    autoPrintReceipt: printer.autoPrintOnSale,
     savedPrinterName: printer.deviceName,
     savedPrinterMac: printer.macAddress,
-    paperWidth: printer.paperWidth,
+    thermalPaperWidth: printer.paperWidth === '58mm' ? 58 : 80,
   };
   writeStorage(STORAGE_KEYS.settings, seeded);
   return seeded;
 }
 
 export function saveSettings(next: PharmacySettings): PharmacySettings {
+  const safeDecimals: DecimalDigits =
+    next.decimalDigits === 0 ||
+    next.decimalDigits === 2 ||
+    next.decimalDigits === 3
+      ? next.decimalDigits
+      : 2;
+
   const normalized: PharmacySettings = {
     pharmacyName:
       next.pharmacyName.trim() || DEFAULT_PHARMACY_SETTINGS.pharmacyName,
-    branchAddress:
-      next.branchAddress.trim() || DEFAULT_PHARMACY_SETTINGS.branchAddress,
-    phoneNumber: next.phoneNumber.trim(),
+    address: next.address.trim() || DEFAULT_PHARMACY_SETTINGS.address,
+    phone: next.phone.trim(),
     licenseNumber: next.licenseNumber.trim(),
-    receiptFooterNote: next.receiptFooterNote.trim(),
+    websiteUrl: next.websiteUrl.trim(),
+    receiptFooter: next.receiptFooter.trim(),
     autoPrintReceipt: Boolean(next.autoPrintReceipt),
     savedPrinterName: next.savedPrinterName.trim(),
     savedPrinterMac: next.savedPrinterMac.trim(),
-    paperWidth: next.paperWidth === '58mm' ? '58mm' : '80mm',
+    thermalPaperWidth: next.thermalPaperWidth === 58 ? 58 : 80,
+    showWebsiteOnReceipt: Boolean(next.showWebsiteOnReceipt),
     preferUsbScannerFocus: Boolean(next.preferUsbScannerFocus),
-    currencyLabel: (next.currencyLabel.trim() || 'PKR').toUpperCase(),
+    currencyCode: (next.currencyCode.trim() || 'PKR').toUpperCase(),
+    currencySymbol: next.currencySymbol.trim() || 'Rs',
+    useSymbolInsteadOfCode: Boolean(next.useSymbolInsteadOfCode),
+    decimalDigits: safeDecimals,
+    symbolPosition: next.symbolPosition === 'suffix' ? 'suffix' : 'prefix',
+    timezone: next.timezone.trim() || DEFAULT_PHARMACY_SETTINGS.timezone,
+    dateFormat: next.dateFormat === 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY',
     lowStockThreshold: Math.max(
       1,
       Math.floor(Number(next.lowStockThreshold) || 10),
     ),
-    nearExpiryDays: Math.max(1, Math.floor(Number(next.nearExpiryDays) || 60)),
+    expiryAlertDays: Math.max(
+      1,
+      Math.floor(Number(next.expiryAlertDays) || 30),
+    ),
+    showProfitToStaff: Boolean(next.showProfitToStaff),
     activeRole: next.activeRole,
   };
 
@@ -310,7 +598,7 @@ export function saveSettings(next: PharmacySettings): PharmacySettings {
       normalized.savedPrinterName || DEFAULT_PRINTER_CONFIG.deviceName,
     macAddress:
       normalized.savedPrinterMac || DEFAULT_PRINTER_CONFIG.macAddress,
-    paperWidth: normalized.paperWidth,
+    paperWidth: toThermalWidth(normalized.thermalPaperWidth),
     autoPrintOnSale: normalized.autoPrintReceipt,
   };
   savePrinterConfig(syncedPrinter);
@@ -326,7 +614,7 @@ export function resetSettingsToDefaults(): PharmacySettings {
 export function exportDatabaseBackupJson(): string {
   const payload = {
     app: 'Clinix Community Pharmacy POS',
-    schemaVersion: 2,
+    schemaVersion: 3,
     exportedAt: new Date().toISOString(),
     tables: {
       app_settings: loadSettings(),

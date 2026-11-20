@@ -6,10 +6,12 @@ import 'package:share_plus/share_plus.dart';
 import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
 import '../services/printer_service.dart';
+import '../utils/currency_formatter.dart';
 
 /// Dedicated Settings Screen accessible from the POS navigation drawer.
-/// Persists all internal pharmacy, receipt, hardware, counter, and role
-/// preferences locally in SQLite without disturbing sales/stock/ledger data.
+/// Persists multi-currency, regional, pharmacy, receipt, hardware, counter,
+/// and role preferences locally in SQLite + SharedPreferences without ever
+/// disturbing sales, inventory, purchases, or party ledger data.
 class SettingsScreen extends StatefulWidget {
   final PharmacySettings initialSettings;
   final ValueChanged<PharmacySettings> onSettingsChanged;
@@ -28,19 +30,32 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _pharmacyNameCtrl;
-  late final TextEditingController _branchAddressCtrl;
+  late final TextEditingController _addressCtrl;
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _licenseCtrl;
+  late final TextEditingController _websiteUrlCtrl;
   late final TextEditingController _footerNoteCtrl;
-  late final TextEditingController _currencyCtrl;
+
+  late final TextEditingController _currencyCodeCtrl;
+  late final TextEditingController _currencySymbolCtrl;
+  late final TextEditingController _timezoneCtrl;
+
   late final TextEditingController _lowStockCtrl;
-  late final TextEditingController _nearExpiryDaysCtrl;
+  late final TextEditingController _expiryAlertDaysCtrl;
 
   late bool _autoPrintReceipt;
   late String? _savedPrinterName;
   late String? _savedPrinterMac;
-  late int _paperWidthMm;
+  late int _thermalPaperWidth;
+  late bool _showWebsiteOnReceipt;
   late bool _preferUsbScannerFocus;
+
+  late bool _useSymbolInsteadOfCode;
+  late int _decimalDigits;
+  late String _symbolPosition;
+  late String _dateFormat;
+
+  late bool _showProfitToStaff;
   late UserRole _activeUserRole;
 
   List<BluetoothDevice> _pairedDevices = [];
@@ -54,19 +69,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     final s = widget.initialSettings;
     _pharmacyNameCtrl = TextEditingController(text: s.pharmacyName);
-    _branchAddressCtrl = TextEditingController(text: s.branchAddress);
-    _phoneCtrl = TextEditingController(text: s.phoneNumber);
+    _addressCtrl = TextEditingController(text: s.address);
+    _phoneCtrl = TextEditingController(text: s.phone);
     _licenseCtrl = TextEditingController(text: s.licenseNumber);
-    _footerNoteCtrl = TextEditingController(text: s.receiptFooterNote);
-    _currencyCtrl = TextEditingController(text: s.currencyLabel);
+    _websiteUrlCtrl = TextEditingController(text: s.websiteUrl);
+    _footerNoteCtrl = TextEditingController(text: s.receiptFooter);
+
+    _currencyCodeCtrl = TextEditingController(text: s.currencyCode);
+    _currencySymbolCtrl = TextEditingController(text: s.currencySymbol);
+    _timezoneCtrl = TextEditingController(text: s.timezone);
+
     _lowStockCtrl = TextEditingController(text: '${s.lowStockThreshold}');
-    _nearExpiryDaysCtrl = TextEditingController(text: '${s.nearExpiryDays}');
+    _expiryAlertDaysCtrl = TextEditingController(text: '${s.expiryAlertDays}');
 
     _autoPrintReceipt = s.autoPrintReceipt;
     _savedPrinterName = s.savedPrinterName;
     _savedPrinterMac = s.savedPrinterMac;
-    _paperWidthMm = s.paperWidthMm == 58 ? 58 : 80;
+    _thermalPaperWidth = s.thermalPaperWidth == 58 ? 58 : 80;
+    _showWebsiteOnReceipt = s.showWebsiteOnReceipt;
     _preferUsbScannerFocus = s.preferUsbScannerFocus;
+
+    _useSymbolInsteadOfCode = s.useSymbolInsteadOfCode;
+    _decimalDigits =
+        (s.decimalDigits == 0 || s.decimalDigits == 2 || s.decimalDigits == 3)
+            ? s.decimalDigits
+            : 2;
+    _symbolPosition = s.symbolPosition == 'suffix' ? 'suffix' : 'prefix';
+    _dateFormat = s.dateFormat == 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY';
+
+    _showProfitToStaff = s.showProfitToStaff;
     _activeUserRole = s.activeUserRole;
 
     _syncFromSqliteAndPrefs();
@@ -75,13 +106,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _pharmacyNameCtrl.dispose();
-    _branchAddressCtrl.dispose();
+    _addressCtrl.dispose();
     _phoneCtrl.dispose();
     _licenseCtrl.dispose();
+    _websiteUrlCtrl.dispose();
     _footerNoteCtrl.dispose();
-    _currencyCtrl.dispose();
+    _currencyCodeCtrl.dispose();
+    _currencySymbolCtrl.dispose();
+    _timezoneCtrl.dispose();
     _lowStockCtrl.dispose();
-    _nearExpiryDaysCtrl.dispose();
+    _expiryAlertDaysCtrl.dispose();
     super.dispose();
   }
 
@@ -103,43 +137,83 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _applySettingsToState(PharmacySettings s) {
     _pharmacyNameCtrl.text = s.pharmacyName;
-    _branchAddressCtrl.text = s.branchAddress;
-    _phoneCtrl.text = s.phoneNumber;
+    _addressCtrl.text = s.address;
+    _phoneCtrl.text = s.phone;
     _licenseCtrl.text = s.licenseNumber;
-    _footerNoteCtrl.text = s.receiptFooterNote;
-    _currencyCtrl.text = s.currencyLabel;
+    _websiteUrlCtrl.text = s.websiteUrl;
+    _footerNoteCtrl.text = s.receiptFooter;
+
+    _currencyCodeCtrl.text = s.currencyCode;
+    _currencySymbolCtrl.text = s.currencySymbol;
+    _timezoneCtrl.text = s.timezone;
+
     _lowStockCtrl.text = '${s.lowStockThreshold}';
-    _nearExpiryDaysCtrl.text = '${s.nearExpiryDays}';
+    _expiryAlertDaysCtrl.text = '${s.expiryAlertDays}';
 
     _autoPrintReceipt = s.autoPrintReceipt;
     _savedPrinterName = s.savedPrinterName;
     _savedPrinterMac = s.savedPrinterMac;
-    _paperWidthMm = s.paperWidthMm == 58 ? 58 : 80;
+    _thermalPaperWidth = s.thermalPaperWidth == 58 ? 58 : 80;
+    _showWebsiteOnReceipt = s.showWebsiteOnReceipt;
     _preferUsbScannerFocus = s.preferUsbScannerFocus;
+
+    _useSymbolInsteadOfCode = s.useSymbolInsteadOfCode;
+    _decimalDigits =
+        (s.decimalDigits == 0 || s.decimalDigits == 2 || s.decimalDigits == 3)
+            ? s.decimalDigits
+            : 2;
+    _symbolPosition = s.symbolPosition == 'suffix' ? 'suffix' : 'prefix';
+    _dateFormat = s.dateFormat == 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY';
+
+    _showProfitToStaff = s.showProfitToStaff;
     _activeUserRole = s.activeUserRole;
+  }
+
+  void _applyCurrencyPreset(CurrencyPreset preset) {
+    setState(() {
+      _currencyCodeCtrl.text = preset.code;
+      _currencySymbolCtrl.text = preset.symbol;
+      _decimalDigits = preset.defaultDecimals;
+      _symbolPosition = preset.defaultPosition;
+      _timezoneCtrl.text = preset.defaultTimezone;
+    });
   }
 
   PharmacySettings _collectDraftSettings() {
     final name = _pharmacyNameCtrl.text.trim();
-    final branch = _branchAddressCtrl.text.trim();
-    final currency = _currencyCtrl.text.trim();
+    final addr = _addressCtrl.text.trim();
+    final code = _currencyCodeCtrl.text.trim().toUpperCase();
+    final symbol = _currencySymbolCtrl.text.trim();
+    final tz = _timezoneCtrl.text.trim();
     final lowStock = int.tryParse(_lowStockCtrl.text.trim()) ?? 10;
-    final nearExp = int.tryParse(_nearExpiryDaysCtrl.text.trim()) ?? 60;
+    final expiryDays = int.tryParse(_expiryAlertDaysCtrl.text.trim()) ?? 30;
 
     return PharmacySettings(
       pharmacyName: name.isEmpty ? 'Clinix Community Pharmacy' : name,
-      branchAddress: branch.isEmpty ? '17 KM Ferozepur Road, Lahore' : branch,
-      phoneNumber: _phoneCtrl.text.trim(),
+      address: addr.isEmpty ? '17 KM Ferozepur Road, Lahore' : addr,
+      phone: _phoneCtrl.text.trim(),
       licenseNumber: _licenseCtrl.text.trim(),
-      receiptFooterNote: _footerNoteCtrl.text.trim(),
+      websiteUrl: _websiteUrlCtrl.text.trim(),
+      receiptFooter: _footerNoteCtrl.text.trim(),
       autoPrintReceipt: _autoPrintReceipt,
       savedPrinterName: _savedPrinterName,
       savedPrinterMac: _savedPrinterMac,
-      paperWidthMm: _paperWidthMm == 58 ? 58 : 80,
+      thermalPaperWidth: _thermalPaperWidth == 58 ? 58 : 80,
+      showWebsiteOnReceipt: _showWebsiteOnReceipt,
       preferUsbScannerFocus: _preferUsbScannerFocus,
-      currencyLabel: currency.isEmpty ? 'PKR' : currency.toUpperCase(),
+      currencyCode: code.isEmpty ? 'PKR' : code,
+      currencySymbol: symbol.isEmpty ? 'Rs' : symbol,
+      useSymbolInsteadOfCode: _useSymbolInsteadOfCode,
+      decimalDigits:
+          (_decimalDigits == 0 || _decimalDigits == 2 || _decimalDigits == 3)
+              ? _decimalDigits
+              : 2,
+      symbolPosition: _symbolPosition == 'suffix' ? 'suffix' : 'prefix',
+      timezone: tz.isEmpty ? 'Asia/Karachi' : tz,
+      dateFormat: _dateFormat == 'MM/DD/YYYY' ? 'MM/DD/YYYY' : 'DD/MM/YYYY',
       lowStockThreshold: lowStock < 1 ? 1 : lowStock,
-      nearExpiryDays: nearExp < 1 ? 1 : nearExp,
+      expiryAlertDays: expiryDays < 1 ? 1 : expiryDays,
+      showProfitToStaff: _showProfitToStaff,
       activeUserRole: _activeUserRole,
     );
   }
@@ -155,7 +229,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           await PrinterService.instance.saveDefaultPrinter(
             macAddress: saved.savedPrinterMac!,
             deviceName: saved.savedPrinterName ?? 'Thermal Printer',
-            width: saved.paperWidthMm == 58
+            width: saved.thermalPaperWidth == 58
                 ? ThermalPaperWidth.mm58
                 : ThermalPaperWidth.mm80,
           );
@@ -166,7 +240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       widget.onSettingsChanged(saved);
       if (showConfirmation && mounted) {
-        _showSnack('Settings saved to SQLite and applied immediately.');
+        _showSnack('Settings saved locally and applied immediately.');
       }
     } catch (e) {
       _showSnack('Failed to save settings: $e', isError: true);
@@ -263,7 +337,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       widget.onSettingsChanged(draft);
       await PrinterService.instance.printTestPage(
         macAddress: _savedPrinterMac!,
-        width: _paperWidthMm == 58
+        width: _thermalPaperWidth == 58
             ? ThermalPaperWidth.mm58
             : ThermalPaperWidth.mm80,
         settings: draft,
@@ -284,7 +358,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await Share.shareXFiles(
         [XFile(backupPath, mimeType: 'application/x-sqlite3')],
         subject: 'Clinix Pharmacy SQLite Database Backup',
-        text: 'Offline SQLite backup of inventory, sales, Khata ledger, and settings.',
+        text:
+            'Offline SQLite backup of inventory, sales, purchases, Khata ledger, and settings.',
       );
       _showSnack('SQLite backup ready to save or share.');
     } catch (e) {
@@ -300,7 +375,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Reset Settings to Defaults?'),
         content: const Text(
-          'This restores pharmacy details, paper width, scanner preference, thresholds, and active role to defaults.\n\nYour sales history, stock inventory, and customer Khata ledger data will NOT be deleted.',
+          'This restores currency, regional formats, pharmacy identity, paper width, scanner preference, thresholds, and active role to Clinix defaults.\n\nYour sales history, stock inventory, purchases, and customer/supplier Khata ledger data will NOT be deleted.',
         ),
         actions: [
           TextButton(
@@ -333,13 +408,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(msg),
-          backgroundColor: isError ? Colors.red.shade700 : const Color(0xFF0D7A5F),
+          backgroundColor:
+              isError ? Colors.red.shade700 : const Color(0xFF0D7A5F),
         ),
       );
   }
 
   @override
   Widget build(BuildContext context) {
+    final previewDraft = _collectDraftSettings();
+    final previewMoney = CurrencyFormatter.format(1450.5, previewDraft);
+    final previewDate = CurrencyFormatter.formatDate(
+      DateTime.now().toIso8601String(),
+      previewDraft,
+      includeTime: true,
+    );
+    final activeCode = _currencyCodeCtrl.text.trim().toUpperCase();
+    final tzOptions = [
+      ...CurrencyFormatter.commonTimezones,
+      if (_timezoneCtrl.text.trim().isNotEmpty &&
+          !CurrencyFormatter.commonTimezones
+              .contains(_timezoneCtrl.text.trim()))
+        _timezoneCtrl.text.trim(),
+    ];
+
     return Scaffold(
       appBar: AppBar(
         leading: widget.onOpenDrawer != null
@@ -369,10 +461,220 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
         children: [
-          // 1. PHARMACY & RECEIPT DETAILS
+          // 1. CURRENCY & REGIONAL SETTINGS
+          _buildSectionHeader(
+            icon: Icons.currency_exchange_outlined,
+            title: '1. Currency & Regional Settings',
+            subtitle:
+                'Applies across POS, Inventory, Purchases, Receipts, and A5 PDFs',
+          ),
+          _buildCard([
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D7A5F).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: const Color(0xFF0D7A5F).withOpacity(0.28),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'LIVE FORMAT PREVIEW',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.7,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        previewMoney,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0D7A5F),
+                        ),
+                      ),
+                      Text(
+                        previewDate,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Quick Currency Presets',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: CurrencyFormatter.presets.map((preset) {
+                final isSelected = activeCode == preset.code;
+                return ChoiceChip(
+                  label: Text(
+                    preset.label,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  selected: isSelected,
+                  visualDensity: VisualDensity.compact,
+                  onSelected: (_) => _applyCurrencyPreset(preset),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _currencyCodeCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(
+                      labelText: 'Currency Code (ISO)',
+                      hintText: 'PKR, USD, EUR...',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _currencySymbolCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Currency Symbol',
+                      hintText: r'Rs, $, €, £...',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Use Symbol Instead of ISO Code',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                _useSymbolInsteadOfCode
+                    ? 'Showing symbol (${_currencySymbolCtrl.text.trim().isEmpty ? 'Rs' : _currencySymbolCtrl.text.trim()})'
+                    : 'Showing clean ISO code (${activeCode.isEmpty ? 'PKR' : activeCode})',
+                style: const TextStyle(fontSize: 12),
+              ),
+              value: _useSymbolInsteadOfCode,
+              onChanged: (val) =>
+                  setState(() => _useSymbolInsteadOfCode = val),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Decimal Precision',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 0, label: Text('0 Decimals')),
+                ButtonSegment(value: 2, label: Text('2 Decimals')),
+                ButtonSegment(value: 3, label: Text('3 Decimals')),
+              ],
+              selected: {_decimalDigits},
+              onSelectionChanged: (sel) =>
+                  setState(() => _decimalDigits = sel.first),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Symbol / Code Position',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'prefix', label: Text('Prefix (PKR 100)')),
+                ButtonSegment(value: 'suffix', label: Text('Suffix (100 PKR)')),
+              ],
+              selected: {_symbolPosition},
+              onSelectionChanged: (sel) =>
+                  setState(() => _symbolPosition = sel.first),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: tzOptions.contains(_timezoneCtrl.text.trim())
+                  ? _timezoneCtrl.text.trim()
+                  : 'Asia/Karachi',
+              decoration: const InputDecoration(
+                labelText: 'Timezone Preset',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: tzOptions
+                  .map(
+                    (tz) => DropdownMenuItem(
+                      value: tz,
+                      child: Text(tz),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _timezoneCtrl.text = val);
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _timezoneCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Custom Timezone (IANA)',
+                hintText: 'e.g. Asia/Karachi',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Receipt & Report Date Format',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'DD/MM/YYYY', label: Text('DD/MM/YYYY')),
+                ButtonSegment(value: 'MM/DD/YYYY', label: Text('MM/DD/YYYY')),
+              ],
+              selected: {_dateFormat},
+              onSelectionChanged: (sel) =>
+                  setState(() => _dateFormat = sel.first),
+            ),
+          ]),
+
+          const SizedBox(height: 18),
+
+          // 2. PHARMACY & RECEIPT DETAILS
           _buildSectionHeader(
             icon: Icons.storefront_outlined,
-            title: '1. Pharmacy & Receipt Details',
+            title: '2. Pharmacy & Receipt Details',
             subtitle: 'Printed on ESC/POS thermal receipts and A5 PDF invoices',
           ),
           _buildCard([
@@ -386,7 +688,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _branchAddressCtrl,
+              controller: _addressCtrl,
               decoration: const InputDecoration(
                 labelText: 'Branch / Address',
                 border: OutlineInputBorder(),
@@ -422,6 +724,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 12),
             TextField(
+              controller: _websiteUrlCtrl,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'Website URL (Optional)',
+                hintText: 'https://clinixpharmacy.pk',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
               controller: _footerNoteCtrl,
               maxLines: 2,
               decoration: const InputDecoration(
@@ -432,6 +745,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 6),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Show Website URL on Receipts & Invoices',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              subtitle: const Text(
+                'Print the website address on thermal receipts and A5 PDFs when entered',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: _showWebsiteOnReceipt,
+              onChanged: (val) => setState(() => _showWebsiteOnReceipt = val),
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text(
@@ -449,10 +775,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 18),
 
-          // 2. PRINTER & BARCODE HARDWARE PREFERENCES
+          // 3. PRINTER & BARCODE HARDWARE PREFERENCES
           _buildSectionHeader(
             icon: Icons.print_outlined,
-            title: '2. Printer & Barcode Hardware',
+            title: '3. Printer & Barcode Hardware',
             subtitle: 'Bluetooth ESC/POS printer, paper roll width & USB scanner',
           ),
           _buildCard([
@@ -531,9 +857,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ButtonSegment(value: 58, label: Text('58mm (32 cols)')),
                 ButtonSegment(value: 80, label: Text('80mm (48 cols)')),
               ],
-              selected: {_paperWidthMm},
+              selected: {_thermalPaperWidth},
               onSelectionChanged: (sel) =>
-                  setState(() => _paperWidthMm = sel.first),
+                  setState(() => _thermalPaperWidth = sel.first),
             ),
             const SizedBox(height: 8),
             SwitchListTile(
@@ -554,26 +880,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 18),
 
-          // 3. COUNTER & ROLE DISPLAY OPTIONS
+          // 4. COUNTER & ROLE DISPLAY OPTIONS
           _buildSectionHeader(
             icon: Icons.tune_outlined,
-            title: '3. Counter & Role Display Options',
-            subtitle: 'Currency, stock/expiry alerts, and active counter RBAC role',
+            title: '4. Counter & Role Display Options',
+            subtitle: 'Stock/expiry alerts, active RBAC role, and staff profit visibility',
           ),
           _buildCard([
             Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _currencyCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Currency Label',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: _lowStockCtrl,
@@ -585,18 +900,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _expiryAlertDaysCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Expiry Alert (Days)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ),
               ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nearExpiryDaysCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Near-Expiry Alert Window (Days)',
-                hintText: 'e.g. 30 or 60',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
             ),
             const SizedBox(height: 8),
             Wrap(
@@ -605,7 +921,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 return ActionChip(
                   label: Text('$days days'),
                   onPressed: () =>
-                      setState(() => _nearExpiryDaysCtrl.text = '$days'),
+                      setState(() => _expiryAlertDaysCtrl.text = '$days'),
                 );
               }).toList(),
             ),
@@ -630,14 +946,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
             const SizedBox(height: 6),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Show Cost & Net Profit to Staff',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              subtitle: const Text(
+                'Disabled by default so Cost & Profit stay visible only for Admin / Manager',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: _showProfitToStaff,
+              onChanged: (val) => setState(() => _showProfitToStaff = val),
+            ),
             Text(
-              _activeUserRole.canViewProfitAndCost
-                  ? 'Cost, Net Profit, and Khata Credit are visible for ${_activeUserRole.label}.'
+              (_activeUserRole.canViewProfitAndCost || _showProfitToStaff)
+                  ? 'Cost and Net Profit are visible for ${_activeUserRole.label}.'
                   : 'Cost, Net Profit, and Khata Credit are hidden for ${_activeUserRole.label}.',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: _activeUserRole.canViewProfitAndCost
+                color: (_activeUserRole.canViewProfitAndCost ||
+                        _showProfitToStaff)
                     ? const Color(0xFF0D7A5F)
                     : Colors.amber.shade800,
               ),
@@ -646,10 +976,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 18),
 
-          // 4. DATA BACKUP & RESET SAFETY
+          // 5. DATA BACKUP & RESET SAFETY
           _buildSectionHeader(
             icon: Icons.security_outlined,
-            title: '4. Data Backup & Reset Safety',
+            title: '5. Data Backup & Reset Safety',
             subtitle: 'Export your SQLite database or reset settings safely',
           ),
           _buildCard([
@@ -681,7 +1011,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Resetting settings never wipes your sales receipts, inventory stock, or customer Khata ledger balances.',
+              'Resetting settings never wipes your sales receipts, inventory stock, purchases, or customer/supplier Khata balances.',
               style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
             ),
           ]),

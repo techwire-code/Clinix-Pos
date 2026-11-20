@@ -22,14 +22,21 @@ import {
 import {
   ExpenseCategory,
   ExpenseRecord,
+  PharmacySettings,
   SaleRecord,
 } from '../types/pharmacy';
+import {
+  formatDateBySettings,
+  formatMoney,
+  getCurrencyLabel,
+} from '../services/localDb';
 import { ThemeMode } from '../services/themeService';
 import { downloadCsvFile } from '../services/csvExport';
 
 interface ReportsAndExpensesWorkspaceProps {
   sales: SaleRecord[];
   expenses: ExpenseRecord[];
+  settings?: PharmacySettings;
   theme?: ThemeMode;
   onAddExpense: (payload: Omit<ExpenseRecord, 'id' | 'createdAt'>) => void;
   onDeleteExpense: (id: number) => void;
@@ -71,12 +78,16 @@ export const ReportsAndExpensesWorkspace: React.FC<
 > = ({
   sales,
   expenses,
+  settings,
   theme = 'light',
   onAddExpense,
   onDeleteExpense,
   onOpenInvoiceModal,
 }) => {
   const isDark = theme === 'dark';
+  const cur = getCurrencyLabel(settings);
+  const csvCur = getCurrencyLabel(settings, true);
+  const digits = settings?.decimalDigits ?? 2;
   const [subTab, setSubTab] = useState<ReportSubTab>('receipts');
   const [selectedDate, setSelectedDate] = useState<string>(getTodayDateKey);
   const [showAllReceiptDates, setShowAllReceiptDates] = useState<boolean>(true);
@@ -375,11 +386,11 @@ export const ReportsAndExpensesWorkspace: React.FC<
         'Payment Mode',
         'Transaction Reference',
         'Cashier',
-        'Subtotal (PKR)',
-        'Discount (PKR)',
-        'Net Payable (PKR)',
-        'Cost COGS (PKR)',
-        'Receipt Profit (PKR)',
+        `Subtotal (${csvCur})`,
+        `Discount (${csvCur})`,
+        `Net Payable (${csvCur})`,
+        `Cost COGS (${csvCur})`,
+        `Receipt Profit (${csvCur})`,
         'Margin %',
       ],
       filteredReceipts.map((s) => {
@@ -394,11 +405,11 @@ export const ReportsAndExpensesWorkspace: React.FC<
           s.paymentMode,
           s.transactionReference || '',
           s.createdByName || 'Admin',
-          s.subtotal.toFixed(2),
-          s.discountAmount.toFixed(2),
-          s.netPayable.toFixed(2),
-          s.totalCost.toFixed(2),
-          s.netProfit.toFixed(2),
+          s.subtotal.toFixed(digits),
+          s.discountAmount.toFixed(digits),
+          s.netPayable.toFixed(digits),
+          s.totalCost.toFixed(digits),
+          s.netProfit.toFixed(digits),
           `${margin}%`,
         ];
       }),
@@ -411,24 +422,24 @@ export const ReportsAndExpensesWorkspace: React.FC<
       [
         'Date',
         'Receipts',
-        'Gross Sales (PKR)',
-        'Discounts (PKR)',
-        'Net Sales (PKR)',
-        'COGS (PKR)',
-        'Receipt Profit (PKR)',
-        'Expenses (PKR)',
-        'True Net Profit (PKR)',
+        `Gross Sales (${csvCur})`,
+        `Discounts (${csvCur})`,
+        `Net Sales (${csvCur})`,
+        `COGS (${csvCur})`,
+        `Receipt Profit (${csvCur})`,
+        `Expenses (${csvCur})`,
+        `True Net Profit (${csvCur})`,
       ],
       dailyRows.map((r) => [
         r.date,
         r.receiptCount,
-        r.grossSales.toFixed(2),
-        r.discounts.toFixed(2),
-        r.netSales.toFixed(2),
-        r.cogs.toFixed(2),
-        r.receiptProfit.toFixed(2),
-        r.expenses.toFixed(2),
-        r.trueNetProfit.toFixed(2),
+        r.grossSales.toFixed(digits),
+        r.discounts.toFixed(digits),
+        r.netSales.toFixed(digits),
+        r.cogs.toFixed(digits),
+        r.receiptProfit.toFixed(digits),
+        r.expenses.toFixed(digits),
+        r.trueNetProfit.toFixed(digits),
       ]),
     );
   };
@@ -439,12 +450,12 @@ export const ReportsAndExpensesWorkspace: React.FC<
       [
         'Month',
         'Receipts',
-        'Net Sales (PKR)',
-        'Discounts (PKR)',
-        'COGS (PKR)',
-        'Gross Receipt Profit (PKR)',
-        'Expenses (PKR)',
-        'True Net Profit (PKR)',
+        `Net Sales (${csvCur})`,
+        `Discounts (${csvCur})`,
+        `COGS (${csvCur})`,
+        `Gross Receipt Profit (${csvCur})`,
+        `Expenses (${csvCur})`,
+        `True Net Profit (${csvCur})`,
         'Net Margin %',
       ],
       monthlyRows.map((r) => {
@@ -455,12 +466,12 @@ export const ReportsAndExpensesWorkspace: React.FC<
         return [
           r.monthLabel,
           r.receiptCount,
-          r.netSales.toFixed(2),
-          r.discounts.toFixed(2),
-          r.cogs.toFixed(2),
-          r.grossProfit.toFixed(2),
-          r.expenses.toFixed(2),
-          r.trueNetProfit.toFixed(2),
+          r.netSales.toFixed(digits),
+          r.discounts.toFixed(digits),
+          r.cogs.toFixed(digits),
+          r.grossProfit.toFixed(digits),
+          r.expenses.toFixed(digits),
+          r.trueNetProfit.toFixed(digits),
           `${netMargin}%`,
         ];
       }),
@@ -476,13 +487,13 @@ export const ReportsAndExpensesWorkspace: React.FC<
     ].join('_');
     downloadCsvFile(
       `clinix_expenses_${scopeSuffix}.csv`,
-      ['Date', 'Title', 'Category', 'Payment Mode', 'Amount (PKR)', 'Notes'],
+      ['Date', 'Title', 'Category', 'Payment Mode', `Amount (${csvCur})`, 'Notes'],
       filteredExpenses.map((exp) => [
         exp.date,
         exp.title,
         exp.category,
         exp.paymentMode,
-        exp.amount.toFixed(2),
+        exp.amount.toFixed(digits),
         exp.notes || '',
       ]),
     );
@@ -510,7 +521,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
             Total Sales
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-slate-900 dark:text-slate-100">
-            PKR {overallTotals.totalSales.toFixed(2)}
+            {formatMoney(overallTotals.totalSales, settings)}
           </p>
           <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
             {sales.length} receipts
@@ -522,7 +533,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
             Cost of Goods (COGS)
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-slate-700 dark:text-slate-300">
-            PKR {overallTotals.totalCost.toFixed(2)}
+            {formatMoney(overallTotals.totalCost, settings)}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
             Purchase basis
@@ -534,7 +545,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
             Receipt Profit (Gross)
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-[#0D7A5F] dark:text-emerald-400">
-            PKR {overallTotals.grossProfit.toFixed(2)}
+            {formatMoney(overallTotals.grossProfit, settings)}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
             After bill &amp; item discounts
@@ -546,7 +557,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
             Operating Expenses
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-amber-700 dark:text-amber-400">
-            PKR {overallTotals.totalExpenses.toFixed(2)}
+            {formatMoney(overallTotals.totalExpenses, settings)}
           </p>
           <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
             {expenses.length} recorded entries
@@ -564,7 +575,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                 : 'text-red-700 dark:text-red-400'
             }`}
           >
-            PKR {overallTotals.trueNetProfit.toFixed(2)}
+            {formatMoney(overallTotals.trueNetProfit, settings)}
           </p>
           <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
             Receipt Profit &minus; Expenses
@@ -600,7 +611,8 @@ export const ReportsAndExpensesWorkspace: React.FC<
 
         <div className="flex items-center gap-3">
           <span className="hidden text-xs text-slate-500 sm:inline dark:text-slate-400">
-            Admin Financial Audit · Clinix Community Pharmacy
+            Admin Financial Audit ·{' '}
+            {settings?.pharmacyName || 'Clinix Community Pharmacy'}
           </span>
           <button
             type="button"
@@ -695,7 +707,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                 Net Sales
               </p>
               <p className="font-mono-tabular text-base font-bold text-slate-900 dark:text-slate-100">
-                PKR {receiptScopeTotals.revenue.toFixed(2)}
+                {formatMoney(receiptScopeTotals.revenue, settings)}
               </p>
             </div>
             <div>
@@ -703,7 +715,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                 Cost (COGS)
               </p>
               <p className="font-mono-tabular text-base font-bold text-slate-700 dark:text-slate-300">
-                PKR {receiptScopeTotals.cogs.toFixed(2)}
+                {formatMoney(receiptScopeTotals.cogs, settings)}
               </p>
             </div>
             <div>
@@ -711,12 +723,12 @@ export const ReportsAndExpensesWorkspace: React.FC<
                 Receipt Profit
               </p>
               <p className="font-mono-tabular text-base font-bold text-[#0D7A5F] dark:text-emerald-400">
-                PKR {receiptScopeTotals.profit.toFixed(2)}
+                {formatMoney(receiptScopeTotals.profit, settings)}
               </p>
             </div>
             <div>
               <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                After Day Expenses (-PKR {receiptScopeTotals.dayExpenses.toFixed(0)})
+                After Day Expenses (-{formatMoney(receiptScopeTotals.dayExpenses, settings)})
               </p>
               <p
                 className={`font-mono-tabular text-base font-bold ${
@@ -725,7 +737,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                     : 'text-red-700 dark:text-red-400'
                 }`}
               >
-                PKR {receiptScopeTotals.netAfterExpenses.toFixed(2)}
+                {formatMoney(receiptScopeTotals.netAfterExpenses, settings)}
               </p>
             </div>
           </div>
@@ -764,15 +776,11 @@ export const ReportsAndExpensesWorkspace: React.FC<
                           ? (sale.netProfit / sale.netPayable) * 100
                           : 0;
                       const isExpanded = expandedSaleId === sale.id;
-                      const dt = new Date(sale.createdAt);
-                      const timeLabel = Number.isNaN(dt.getTime())
-                        ? sale.createdAt
-                        : dt.toLocaleString('en-PK', {
-                            day: '2-digit',
-                            month: 'short',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          });
+                      const timeLabel = formatDateBySettings(
+                        sale.createdAt,
+                        settings,
+                        { includeTime: true },
+                      );
 
                       return (
                         <React.Fragment key={sale.id}>
@@ -795,16 +803,16 @@ export const ReportsAndExpensesWorkspace: React.FC<
                               </p>
                             </td>
                             <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                              {sale.subtotal.toFixed(2)}
+                              {formatMoney(sale.subtotal, settings)}
                             </td>
                             <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
-                              -{sale.discountAmount.toFixed(2)}
+                              -{formatMoney(sale.discountAmount, settings)}
                             </td>
                             <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                              {sale.netPayable.toFixed(2)}
+                              {formatMoney(sale.netPayable, settings)}
                             </td>
                             <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                              {sale.totalCost.toFixed(2)}
+                              {formatMoney(sale.totalCost, settings)}
                             </td>
                             <td
                               className={`px-3 py-3 text-right font-mono-tabular font-bold ${
@@ -813,7 +821,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                                   : 'text-red-700 dark:text-red-400'
                               }`}
                             >
-                              PKR {sale.netProfit.toFixed(2)}
+                              {formatMoney(sale.netProfit, settings)}
                             </td>
                             <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
                               {marginPct.toFixed(1)}%
@@ -893,16 +901,16 @@ export const ReportsAndExpensesWorkspace: React.FC<
                                               {line.quantity}
                                             </td>
                                             <td className="py-1.5 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
-                                              {line.unitPrice.toFixed(2)}
+                                              {formatMoney(line.unitPrice, settings)}
                                             </td>
                                             <td className="py-1.5 text-right font-mono-tabular text-slate-500 dark:text-slate-400">
-                                              {line.costPrice.toFixed(2)}
+                                              {formatMoney(line.costPrice, settings)}
                                             </td>
                                             <td className="py-1.5 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
-                                              {line.itemDiscount.toFixed(2)}
+                                              {formatMoney(line.itemDiscount, settings)}
                                             </td>
                                             <td className="py-1.5 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                                              {line.lineTotal.toFixed(2)}
+                                              {formatMoney(line.lineTotal, settings)}
                                             </td>
                                             <td
                                               className={`py-1.5 text-right font-mono-tabular font-semibold ${
@@ -911,7 +919,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                                                   : 'text-red-700 dark:text-red-400'
                                               }`}
                                             >
-                                              PKR {lineProfit.toFixed(2)}
+                                              {formatMoney(lineProfit, settings)}
                                             </td>
                                           </tr>
                                         );
@@ -1038,22 +1046,22 @@ export const ReportsAndExpensesWorkspace: React.FC<
                       className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
                     >
                       <td className="px-4 py-3 font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                        {row.date}
+                        {formatDateBySettings(row.date, settings)}
                       </td>
                       <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
                         {row.receiptCount}
                       </td>
                       <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                        PKR {row.netSales.toFixed(2)}
+                        {formatMoney(row.netSales, settings)}
                       </td>
                       <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                        PKR {row.cogs.toFixed(2)}
+                        {formatMoney(row.cogs, settings)}
                       </td>
                       <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                        PKR {row.receiptProfit.toFixed(2)}
+                        {formatMoney(row.receiptProfit, settings)}
                       </td>
                       <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
-                        PKR {row.expenses.toFixed(2)}
+                        {formatMoney(row.expenses, settings)}
                       </td>
                       <td
                         className={`px-3 py-3 text-right font-mono-tabular font-bold ${
@@ -1062,7 +1070,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                             : 'text-red-700 dark:text-red-400'
                         }`}
                       >
-                        PKR {row.trueNetProfit.toFixed(2)}
+                        {formatMoney(row.trueNetProfit, settings)}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <button
@@ -1207,16 +1215,16 @@ export const ReportsAndExpensesWorkspace: React.FC<
                           {row.receiptCount}
                         </td>
                         <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                          PKR {row.netSales.toFixed(2)}
+                          {formatMoney(row.netSales, settings)}
                         </td>
                         <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                          PKR {row.cogs.toFixed(2)}
+                          {formatMoney(row.cogs, settings)}
                         </td>
                         <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                          PKR {row.grossProfit.toFixed(2)}
+                          {formatMoney(row.grossProfit, settings)}
                         </td>
                         <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
-                          PKR {row.expenses.toFixed(2)}
+                          {formatMoney(row.expenses, settings)}
                         </td>
                         <td
                           className={`px-3 py-3 text-right font-mono-tabular font-bold ${
@@ -1225,7 +1233,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                               : 'text-red-700 dark:text-red-400'
                           }`}
                         >
-                          PKR {row.trueNetProfit.toFixed(2)}
+                          {formatMoney(row.trueNetProfit, settings)}
                         </td>
                         <td className="px-4 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
                           {netMargin.toFixed(1)}%
@@ -1302,7 +1310,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
 
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                  Amount (PKR) *
+                  Amount ({cur}) *
                 </label>
                 <input
                   type="number"
@@ -1407,10 +1415,11 @@ export const ReportsAndExpensesWorkspace: React.FC<
 
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-mono-tabular text-xs font-semibold text-amber-700 dark:text-amber-400">
-                  Filtered Total: PKR{' '}
-                  {filteredExpenses
-                    .reduce((s, e) => s + e.amount, 0)
-                    .toFixed(2)}
+                  Filtered Total:{' '}
+                  {formatMoney(
+                    filteredExpenses.reduce((s, e) => s + e.amount, 0),
+                    settings,
+                  )}
                 </span>
                 <button
                   type="button"
@@ -1435,7 +1444,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                       {cat}
                     </p>
                     <p className="mt-0.5 font-mono-tabular text-sm font-bold text-slate-900 dark:text-slate-100">
-                      PKR {amt.toFixed(2)}
+                      {formatMoney(amt, settings)}
                     </p>
                   </div>
                 ))}
@@ -1472,7 +1481,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                           className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
                         >
                           <td className="px-4 py-3 font-mono-tabular text-slate-700 whitespace-nowrap dark:text-slate-300">
-                            {exp.date}
+                            {formatDateBySettings(exp.date, settings)}
                           </td>
                           <td className="px-4 py-3">
                             <p className="font-semibold text-slate-900 dark:text-slate-100">
@@ -1491,7 +1500,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                             {exp.paymentMode}
                           </td>
                           <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-amber-700 dark:text-amber-400">
-                            PKR {exp.amount.toFixed(2)}
+                            {formatMoney(exp.amount, settings)}
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button

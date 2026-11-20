@@ -23,9 +23,11 @@ import {
 import {
   Party,
   PharmacyItem,
+  PharmacySettings,
   PurchaseRecord,
   SaleRecord,
 } from '../types/pharmacy';
+import { formatDateBySettings, formatMoney } from '../services/localDb';
 import { isManagerOrAdminRole, StaffSession } from './LoginScreen';
 import { ThemeMode } from '../services/themeService';
 
@@ -35,6 +37,7 @@ interface DashboardWorkspaceProps {
   parties: Party[];
   sales: SaleRecord[];
   purchases: PurchaseRecord[];
+  settings?: PharmacySettings;
   theme?: ThemeMode;
   onGoToPos: () => void;
   onNavigateTab: (
@@ -58,6 +61,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
   parties,
   sales,
   purchases,
+  settings,
   theme = 'light',
   onGoToPos,
   onNavigateTab,
@@ -66,7 +70,16 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
   const isLimitedUser = !isManagerOrAdminRole(session.roleKey);
   const isDark = theme === 'dark';
 
+  const expiryAlertDays = Math.max(1, settings?.expiryAlertDays ?? 30);
+
   const lowStockThreshold = useMemo(() => {
+    if (
+      settings?.lowStockThreshold !== undefined &&
+      Number.isFinite(settings.lowStockThreshold) &&
+      settings.lowStockThreshold >= 1
+    ) {
+      return settings.lowStockThreshold;
+    }
     try {
       const saved = localStorage.getItem(THRESHOLD_STORAGE_KEY);
       const parsed = saved ? Number(saved) : 10;
@@ -74,7 +87,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
     } catch {
       return 10;
     }
-  }, []);
+  }, [settings?.lowStockThreshold]);
 
   const scopedSales = useMemo(() => {
     if (!isLimitedUser) return sales;
@@ -111,7 +124,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
         const daysLeft = Math.round(
           (dt.getTime() - todayStartMs) / (1000 * 60 * 60 * 24),
         );
-        if (daysLeft < 0 || daysLeft > 30) return null;
+        if (daysLeft < 0 || daysLeft > expiryAlertDays) return null;
         return { item, daysLeft };
       })
       .filter(
@@ -134,12 +147,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
       0,
     );
 
-    const formattedDate = now.toLocaleDateString('en-PK', {
-      weekday: 'short',
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
+    const formattedDate = formatDateBySettings(now, settings);
 
     return {
       formattedDate,
@@ -153,7 +161,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
       toPay,
       stockRetailValue,
     };
-  }, [items, parties, scopedSales, lowStockThreshold]);
+  }, [items, parties, scopedSales, lowStockThreshold, expiryAlertDays, settings]);
 
   const sevenDaySeries = useMemo(() => {
     const now = new Date();
@@ -205,12 +213,14 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
             {session.role})
           </p>
           <h2 className="mt-1 font-display text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Clinix Community Pharmacy {isLimitedUser ? 'Counter' : 'Overview'}
+            {settings?.pharmacyName || 'Clinix Community Pharmacy'}{' '}
+            {isLimitedUser ? 'Counter' : 'Overview'}
           </h2>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            {settings?.address || '17 KM Ferozepur Road, Lahore'} ·{' '}
             {isLimitedUser
-              ? '17 KM Ferozepur Road, Lahore · POS billing, read-only stock & expiry, and your own receipts'
-              : '17 KM Ferozepur Road, Lahore · Per-unit counter billing & stock control'}
+              ? 'POS billing, read-only stock & expiry, and your own receipts'
+              : 'Per-unit counter billing & stock control'}
           </p>
         </div>
 
@@ -292,7 +302,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              30-Day Expiry Report
+              {expiryAlertDays}-Day Expiry Report
             </p>
             <p
               className={`mt-1.5 font-mono-tabular text-2xl font-bold ${
@@ -304,7 +314,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
               {stats.expiring30Items.length}
             </p>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Batches expiring within 30 days
+              Batches expiring within {expiryAlertDays} days
             </p>
           </div>
         </div>
@@ -315,7 +325,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
               Today's Revenue
             </p>
             <p className="mt-1.5 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
-              PKR {stats.todayRevenue.toFixed(2)}
+              {formatMoney(stats.todayRevenue, settings)}
             </p>
             <p className="mt-1 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
               {stats.todayCount}{' '}
@@ -328,7 +338,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
               Today's Net Profit
             </p>
             <p className="mt-1.5 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
-              PKR {stats.todayProfit.toFixed(2)}
+              {formatMoney(stats.todayProfit, settings)}
             </p>
             <p className="mt-1 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
               After item &amp; bill discounts
@@ -350,7 +360,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
               Exp
             </p>
             <p className="mt-1 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
-              Below {lowStockThreshold} units · &le;30d expiry
+              Below {lowStockThreshold} units · &le;{expiryAlertDays}d expiry
             </p>
           </div>
 
@@ -359,10 +369,10 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
               Receivables / Payables
             </p>
             <p className="mt-1.5 font-mono-tabular text-xl font-bold text-slate-900 dark:text-slate-100">
-              PKR {stats.toCollect.toLocaleString()}
+              {formatMoney(stats.toCollect, settings)}
             </p>
             <p className="mt-1 font-mono-tabular text-xs text-amber-700 dark:text-amber-400">
-              To Pay Suppliers: PKR {stats.toPay.toLocaleString()}
+              To Pay Suppliers: {formatMoney(stats.toPay, settings)}
             </p>
           </div>
         </div>
@@ -526,7 +536,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
                           {sale.paymentMode}
                         </td>
                         <td className="px-4 py-2.5 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                          PKR {sale.netPayable.toFixed(2)}
+                          {formatMoney(sale.netPayable, settings)}
                         </td>
                         <td className="px-5 py-2.5 text-right">
                           <button
@@ -612,7 +622,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
                     />
                     <Tooltip
                       formatter={(value) => [
-                        `PKR ${Number(value ?? 0).toFixed(2)}`,
+                        formatMoney(Number(value ?? 0), settings),
                         'Net Profit',
                       ]}
                       contentStyle={{
@@ -756,8 +766,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
                 Recent POS Bills
               </h3>
               <span className="font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
-                Stock Retail Value: PKR{' '}
-                {stats.stockRetailValue.toLocaleString()}
+                Stock Retail Value: {formatMoney(stats.stockRetailValue, settings)}
               </span>
             </div>
             <div className="overflow-x-auto">
@@ -787,7 +796,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
                         {sale.paymentMode}
                       </td>
                       <td className="px-4 py-2.5 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                        PKR {sale.netPayable.toFixed(2)}
+                        {formatMoney(sale.netPayable, settings)}
                       </td>
                       <td className="px-5 py-2.5 text-right">
                         <button

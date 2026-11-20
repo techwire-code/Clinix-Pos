@@ -12,8 +12,12 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { PharmacyItem } from '../types/pharmacy';
-import { calculateUnitPrice } from '../services/localDb';
+import { PharmacyItem, PharmacySettings } from '../types/pharmacy';
+import {
+  calculateUnitPrice,
+  formatMoney,
+  getCurrencyLabel,
+} from '../services/localDb';
 import { downloadCsvFile } from '../services/csvExport';
 import {
   CSV_IMPORT_TEMPLATE_HEADERS,
@@ -28,6 +32,7 @@ interface InventoryWorkspaceProps {
   readOnly?: boolean;
   defaultLowStockThreshold?: number;
   nearExpiryDays?: number;
+  settings?: PharmacySettings;
   onSaveItem: (item: Omit<PharmacyItem, 'id'> & { id?: number }) => void;
   onDeleteItem: (id: number) => void;
   onImportItems?: (
@@ -71,10 +76,14 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
   readOnly = false,
   defaultLowStockThreshold,
   nearExpiryDays = 90,
+  settings,
   onSaveItem,
   onDeleteItem,
   onImportItems,
 }) => {
+  const cur = getCurrencyLabel(settings);
+  const csvCur = getCurrencyLabel(settings, true);
+  const digits = settings?.decimalDigits ?? 2;
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<StockFilter>('all');
   const [threshold, setThreshold] = useState<number>(() => {
@@ -199,7 +208,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
         'Batch Number',
         'Stock Quantity',
         'Unit',
-        'Cost Value (PKR)',
+        `Cost Value (${csvCur})`,
       ],
       expiry30ReportItems.map(({ item, daysLeft }) => [
         item.expiryDate,
@@ -209,7 +218,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
         item.batchNumber,
         item.stockQuantity,
         item.unit,
-        (item.costPrice * item.stockQuantity).toFixed(2),
+        (item.costPrice * item.stockQuantity).toFixed(digits),
       ]),
     );
   };
@@ -247,13 +256,13 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
         'Expiry Date',
         'Units Per Box',
         'Unit',
-        'Box Cost (PKR)',
-        'Box Selling (PKR)',
-        'Unit Cost (PKR)',
-        'Unit Selling (PKR)',
+        `Box Cost (${csvCur})`,
+        `Box Selling (${csvCur})`,
+        `Unit Cost (${csvCur})`,
+        `Unit Selling (${csvCur})`,
         'Stock Quantity',
-        'Stock Cost Value (PKR)',
-        'Stock Retail Value (PKR)',
+        `Stock Cost Value (${csvCur})`,
+        `Stock Retail Value (${csvCur})`,
         'Stock Status',
       ],
       filtered.map((item) => {
@@ -272,13 +281,13 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
           item.expiryDate,
           item.unitsPerBox,
           item.unit,
-          item.boxCostPrice.toFixed(2),
-          item.boxSellingPrice.toFixed(2),
-          item.costPrice.toFixed(2),
-          item.sellingPrice.toFixed(2),
+          item.boxCostPrice.toFixed(digits),
+          item.boxSellingPrice.toFixed(digits),
+          item.costPrice.toFixed(digits),
+          item.sellingPrice.toFixed(digits),
           item.stockQuantity,
-          (item.costPrice * item.stockQuantity).toFixed(2),
-          (item.sellingPrice * item.stockQuantity).toFixed(2),
+          (item.costPrice * item.stockQuantity).toFixed(digits),
+          (item.sellingPrice * item.stockQuantity).toFixed(digits),
           status,
         ];
       }),
@@ -569,8 +578,8 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
       }
       setSaveSuccessMsg(
         editingId
-          ? `Updated "${trimmedName}" (Unit price PKR ${unitSelling.toFixed(2)}).`
-          : `Added "${trimmedName}" (Unit price PKR ${unitSelling.toFixed(2)}).`,
+          ? `Updated "${trimmedName}" (Unit price ${formatMoney(unitSelling, settings)}).`
+          : `Added "${trimmedName}" (Unit price ${formatMoney(unitSelling, settings)}).`,
       );
       setFormError(null);
       setBannerDismissed(false);
@@ -673,7 +682,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                 Stock Cost Value
               </p>
               <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
-                PKR {metrics.costValuation.toLocaleString()}
+                {formatMoney(metrics.costValuation, settings)}
               </p>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                 Purchase basis
@@ -684,13 +693,14 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                 Retail Value
               </p>
               <p className="mt-1 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
-                PKR {metrics.retailValuation.toLocaleString()}
+                {formatMoney(metrics.retailValuation, settings)}
               </p>
               <p className="mt-0.5 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
-                Projected margin PKR{' '}
-                {(
-                  metrics.retailValuation - metrics.costValuation
-                ).toLocaleString()}
+                Projected margin{' '}
+                {formatMoney(
+                  metrics.retailValuation - metrics.costValuation,
+                  settings,
+                )}
               </p>
             </div>
           </>
@@ -765,7 +775,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
               [
                 { id: 'all', label: 'All Stock' },
                 { id: 'low', label: `Low Stock (${lowStockItems.length})` },
-                { id: 'expiring', label: 'Expiring <= 90d' },
+                { id: 'expiring', label: `Expiring <= ${Math.max(1, nearExpiryDays)}d` },
                 {
                   id: 'expiry30',
                   label: `30-Day Expiry Report (${expiry30TotalCount})`,
@@ -874,7 +884,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                       {' '}
                       · At-risk cost value{' '}
                       <span className="font-mono-tabular font-semibold text-amber-800 dark:text-amber-400">
-                        PKR {expiry30RiskCost.toLocaleString()}
+                        {formatMoney(expiry30RiskCost, settings)}
                       </span>
                     </>
                   )}
@@ -966,7 +976,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                         {!readOnly && (
                           <>
                             <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                              PKR {riskValue.toFixed(2)}
+                              {formatMoney(riskValue, settings)}
                             </td>
                             <td className="px-4 py-3 text-right">
                               <button
@@ -1064,19 +1074,19 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                         </td>
                         {!readOnly && (
                           <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                            {item.boxCostPrice.toFixed(2)}
+                            {formatMoney(item.boxCostPrice, settings)}
                           </td>
                         )}
                         <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
-                          {item.boxSellingPrice.toFixed(2)}
+                          {formatMoney(item.boxSellingPrice, settings)}
                         </td>
                         {!readOnly && (
                           <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                            {item.costPrice.toFixed(2)}
+                            {formatMoney(item.costPrice, settings)}
                           </td>
                         )}
                         <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                          {item.sellingPrice.toFixed(2)}
+                          {formatMoney(item.sellingPrice, settings)}
                         </td>
                         <td className="px-3 py-3 text-right">
                           <p
@@ -1230,7 +1240,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
 
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                      2. Cost Price of Box (PKR)
+                      2. Cost Price of Box ({cur})
                     </label>
                     <input
                       type="number"
@@ -1247,7 +1257,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
 
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                      3. Selling Price of Box (PKR)
+                      3. Selling Price of Box ({cur})
                     </label>
                     <input
                       type="number"
@@ -1268,7 +1278,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                         Auto Per-Unit Cost ({form.unit || 'Unit'})
                       </span>
                       <span className="font-mono-tabular text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        PKR {autoUnitCostPreview.toFixed(2)}
+                        {formatMoney(autoUnitCostPreview, settings)}
                       </span>
                     </div>
                     <div>
@@ -1276,7 +1286,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                         Auto Per-Unit Selling ({form.unit || 'Unit'})
                       </span>
                       <span className="font-mono-tabular text-sm font-bold text-[#0D7A5F] dark:text-emerald-400">
-                        PKR {autoUnitSellingPreview.toFixed(2)}
+                        {formatMoney(autoUnitSellingPreview, settings)}
                       </span>
                     </div>
                   </div>
@@ -1416,8 +1426,8 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                   </p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     Columns: Medicine Name*, Category, Barcode, Batch Number,
-                    Expiry Date, Units Per Box, Unit, Box Cost (PKR), Box
-                    Selling (PKR), Stock Quantity
+                    Expiry Date, Units Per Box, Unit, Box Cost ({csvCur}), Box
+                    Selling ({csvCur}), Stock Quantity
                   </p>
                 </div>
 
@@ -1586,10 +1596,10 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                                   {row.unitsPerBox} {row.unit}
                                 </td>
                                 <td className="px-3 py-2 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
-                                  {row.boxSellingPrice.toFixed(2)}
+                                  {formatMoney(row.boxSellingPrice, settings)}
                                 </td>
                                 <td className="px-3 py-2 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                                  {row.sellingPrice.toFixed(2)}
+                                  {formatMoney(row.sellingPrice, settings)}
                                 </td>
                                 <td className="px-3 py-2 text-right font-mono-tabular text-slate-800 dark:text-slate-200">
                                   {row.stockQuantity}

@@ -514,7 +514,7 @@ export const DEFAULT_PRINTER_CONFIG: PrinterConfig = {
   deviceName: 'Rongta RPP300 Bluetooth 80mm',
   macAddress: '00:11:22:33:44:55',
   paperWidth: '80mm',
-  autoPrintOnSale: false,
+  autoPrintOnSale: true,
 };
 
 export const SEED_PURCHASES: PurchaseRecord[] = [

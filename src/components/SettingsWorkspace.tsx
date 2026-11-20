@@ -4,7 +4,9 @@ import {
   Bluetooth,
   Building2,
   Check,
+  Coins,
   DatabaseBackup,
+  Globe2,
   Printer,
   RotateCcw,
   Save,
@@ -14,9 +16,17 @@ import {
 } from 'lucide-react';
 import {
   CounterRole,
+  DateFormatOption,
+  DecimalDigits,
   PharmacySettings,
-  ThermalWidth,
+  SymbolPosition,
 } from '../types/pharmacy';
+import {
+  COMMON_TIMEZONES,
+  CURRENCY_PRESETS,
+  formatDateBySettings,
+  formatMoney,
+} from '../services/localDb';
 import { generateTestEscPosReceipt } from '../services/escPosGenerator';
 
 interface SettingsWorkspaceProps {
@@ -30,10 +40,10 @@ interface SettingsWorkspaceProps {
 }
 
 const KNOWN_THERMAL_PRINTERS = [
-  { name: 'Rongta RPP300 Bluetooth 80mm', mac: '00:11:22:33:44:55' },
-  { name: 'Xprinter XP-P300 Portable 58mm', mac: 'DC:0D:30:88:1A:42' },
-  { name: 'Bixolon SPP-R310 Plus', mac: '74:F0:7D:E2:19:08' },
-  { name: 'Epson TM-P80 Mobile Thermal', mac: '04:7F:0E:91:C2:10' },
+  { name: 'Rongta RPP300 Bluetooth 80mm', mac: '00:11:22:33:44:55', width: 80 as const },
+  { name: 'Xprinter XP-P300 Portable 58mm', mac: 'DC:0D:30:88:1A:42', width: 58 as const },
+  { name: 'Bixolon SPP-R310 Plus', mac: '74:F0:7D:E2:19:08', width: 80 as const },
+  { name: 'Epson TM-P80 Mobile Thermal', mac: '04:7F:0E:91:C2:10', width: 80 as const },
 ];
 
 const ROLE_OPTIONS: {
@@ -54,12 +64,12 @@ const ROLE_OPTIONS: {
   {
     value: 'cashier',
     label: 'Cashier',
-    hint: 'Counter billing · Cost & Net Profit hidden on POS',
+    hint: 'Counter billing · Cost & Net Profit hidden unless allowed',
   },
   {
     value: 'sales',
     label: 'Sales Staff',
-    hint: 'Counter billing · Cost & Net Profit hidden on POS',
+    hint: 'Counter billing · Cost & Net Profit hidden unless allowed',
   },
 ];
 
@@ -76,8 +86,11 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [lowStockInput, setLowStockInput] = useState(
     String(settings.lowStockThreshold),
   );
-  const [nearExpiryInput, setNearExpiryInput] = useState(
-    String(settings.nearExpiryDays),
+  const [expiryAlertInput, setExpiryAlertInput] = useState(
+    String(settings.expiryAlertDays),
+  );
+  const [customTimezoneMode, setCustomTimezoneMode] = useState(
+    !COMMON_TIMEZONES.includes(settings.timezone),
   );
   const [statusBanner, setStatusBanner] = useState<{
     type: 'success' | 'info' | 'error';
@@ -89,7 +102,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   useEffect(() => {
     setDraft(settings);
     setLowStockInput(String(settings.lowStockThreshold));
-    setNearExpiryInput(String(settings.nearExpiryDays));
+    setExpiryAlertInput(String(settings.expiryAlertDays));
+    setCustomTimezoneMode(!COMMON_TIMEZONES.includes(settings.timezone));
   }, [settings]);
 
   const showNotice = (type: 'success' | 'info' | 'error', message: string) => {
@@ -101,21 +115,23 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
   const buildNormalizedDraft = (): PharmacySettings => {
     const parsedLow = Math.max(1, Math.floor(Number(lowStockInput) || 10));
-    const parsedExp = Math.max(1, Math.floor(Number(nearExpiryInput) || 60));
+    const parsedExp = Math.max(1, Math.floor(Number(expiryAlertInput) || 30));
     return {
       ...draft,
       pharmacyName:
         draft.pharmacyName.trim() || 'Clinix Community Pharmacy',
-      branchAddress:
-        draft.branchAddress.trim() || '17 KM Ferozepur Road, Lahore',
-      phoneNumber: draft.phoneNumber.trim(),
+      address: draft.address.trim() || '17 KM Ferozepur Road, Lahore',
+      phone: draft.phone.trim(),
       licenseNumber: draft.licenseNumber.trim(),
-      receiptFooterNote: draft.receiptFooterNote.trim(),
+      websiteUrl: draft.websiteUrl.trim(),
+      receiptFooter: draft.receiptFooter.trim(),
       savedPrinterName: draft.savedPrinterName.trim(),
       savedPrinterMac: draft.savedPrinterMac.trim(),
-      currencyLabel: (draft.currencyLabel.trim() || 'PKR').toUpperCase(),
+      currencyCode: (draft.currencyCode.trim() || 'PKR').toUpperCase(),
+      currencySymbol: draft.currencySymbol.trim() || 'Rs',
+      timezone: draft.timezone.trim() || 'Asia/Karachi',
       lowStockThreshold: parsedLow,
-      nearExpiryDays: parsedExp,
+      expiryAlertDays: parsedExp,
     };
   };
 
@@ -126,7 +142,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       onSaveSettings(normalized);
       showNotice(
         'success',
-        'Settings saved locally and applied immediately to POS, receipts, and alerts.',
+        'Settings saved locally and applied immediately across POS, Inventory, Purchases, Reports, receipts, and PDFs.',
       );
     } catch (err) {
       showNotice(
@@ -136,13 +152,30 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     }
   };
 
-  const handleSelectKnownPrinter = (name: string, mac: string) => {
-    const inferredWidth: ThermalWidth = name.includes('58mm') ? '58mm' : draft.paperWidth;
+  const handleApplyCurrencyPreset = (presetCode: string) => {
+    const preset = CURRENCY_PRESETS.find((p) => p.code === presetCode);
+    if (!preset) return;
+    setCustomTimezoneMode(!COMMON_TIMEZONES.includes(preset.defaultTimezone));
+    setDraft((prev) => ({
+      ...prev,
+      currencyCode: preset.code,
+      currencySymbol: preset.symbol,
+      decimalDigits: preset.decimalDigits,
+      symbolPosition: preset.symbolPosition,
+      timezone: preset.defaultTimezone,
+    }));
+  };
+
+  const handleSelectKnownPrinter = (
+    name: string,
+    mac: string,
+    width: 58 | 80,
+  ) => {
     setDraft((prev) => ({
       ...prev,
       savedPrinterName: name,
       savedPrinterMac: mac,
-      paperWidth: inferredWidth,
+      thermalPaperWidth: width,
     }));
   };
 
@@ -152,14 +185,16 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     setTestPrintLines(esc.previewLines);
     showNotice(
       'info',
-      `Generated ${normalized.paperWidth} ESC/POS test receipt (${esc.bytes.length} bytes) for ${normalized.savedPrinterName || 'Thermal Printer'}.`,
+      `Generated ${normalized.thermalPaperWidth}mm ESC/POS test receipt (${esc.bytes.length} bytes) for ${normalized.savedPrinterName || 'Thermal Printer'}.`,
     );
   };
 
   const handleExportDatabaseBackup = () => {
     try {
       const jsonContent = onExportBackup();
-      const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8' });
+      const blob = new Blob([jsonContent], {
+        type: 'application/json;charset=utf-8',
+      });
       const url = URL.createObjectURL(blob);
       const stamp = new Date().toISOString().slice(0, 10);
       const link = document.createElement('a');
@@ -188,7 +223,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       setTestPrintLines(null);
       showNotice(
         'success',
-        'Settings reset to defaults. Sales, stock, and customer Khata ledger were preserved.',
+        'Settings reset to defaults. Sales, stock, purchases, and Khata balances were preserved.',
       );
     } catch (err) {
       showNotice(
@@ -201,16 +236,22 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const isRoleManagerOrAdmin =
     draft.activeRole === 'admin' || draft.activeRole === 'manager';
 
+  const previewMoneyPositive = formatMoney(1250.5, draft);
+  const previewMoneyZero = formatMoney(0, draft);
+  const previewDate = formatDateBySettings(new Date(), draft, {
+    includeTime: true,
+  });
+
   return (
     <form onSubmit={handleSave} className="space-y-6 pb-8">
       {/* Top Action Header */}
       <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center">
         <div>
           <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Pharmacy &amp; Counter Settings
+            Pharmacy, Currency &amp; Counter Settings
           </h2>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Configure receipt branding, Bluetooth ESC/POS hardware, counter alert thresholds, and active role display. Saved locally and applied immediately.
+            Configure multi-currency formatting, timezone/date rules, pharmacy identity, ESC/POS printer width, and counter alert thresholds.
           </p>
         </div>
 
@@ -243,8 +284,277 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
         </div>
       )}
 
+      {/* 1. Multi-Currency & Regional Settings (Full-width feature card) */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-4 flex flex-col justify-between gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-center dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0D7A5F]/10 text-[#0D7A5F] dark:bg-emerald-950 dark:text-emerald-400">
+              <Coins className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Currency &amp; Regional Settings
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Quick-select global currencies or customize code, symbol, decimals, timezone, and date format
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-right dark:border-slate-700 dark:bg-slate-800/70">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Live Format Preview
+            </span>
+            <span className="font-mono-tabular text-sm font-bold text-[#0D7A5F] dark:text-emerald-400">
+              {previewMoneyPositive} · {previewMoneyZero}
+            </span>
+            <span className="block font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
+              {previewDate} ({draft.timezone || 'Asia/Karachi'})
+            </span>
+          </div>
+        </div>
+
+        {/* Quick-select presets */}
+        <div className="mb-4">
+          <p className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+            Quick Currency Presets
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {CURRENCY_PRESETS.map((preset) => {
+              const isSelected =
+                draft.currencyCode.toUpperCase() === preset.code &&
+                draft.currencySymbol === preset.symbol;
+              return (
+                <button
+                  key={preset.code}
+                  type="button"
+                  onClick={() => handleApplyCurrencyPreset(preset.code)}
+                  className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    isSelected
+                      ? 'border-[#0D7A5F] bg-[#0D7A5F] text-white'
+                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  <span>{preset.label}</span>
+                  <span
+                    className={`text-[10px] font-normal ${
+                      isSelected ? 'text-emerald-100' : 'text-slate-400'
+                    }`}
+                  >
+                    {preset.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <label
+              htmlFor="settings-currency-code"
+              className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+            >
+              Currency Code (ISO)
+            </label>
+            <input
+              id="settings-currency-code"
+              type="text"
+              maxLength={8}
+              value={draft.currencyCode}
+              onChange={(e) =>
+                setDraft((p) => ({
+                  ...p,
+                  currencyCode: e.target.value.toUpperCase(),
+                }))
+              }
+              placeholder="PKR"
+              className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm font-semibold uppercase text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="settings-currency-symbol"
+              className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+            >
+              Currency Symbol
+            </label>
+            <input
+              id="settings-currency-symbol"
+              type="text"
+              maxLength={6}
+              value={draft.currencySymbol}
+              onChange={(e) =>
+                setDraft((p) => ({ ...p, currencySymbol: e.target.value }))
+              }
+              placeholder="Rs"
+              className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm font-semibold text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+          </div>
+
+          <div>
+            <p className="mb-1 text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Decimal Digits
+            </p>
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+              {([0, 2, 3] as DecimalDigits[]).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDraft((p) => ({ ...p, decimalDigits: d }))}
+                  className={`min-h-[34px] rounded-md font-mono-tabular text-xs font-semibold transition-colors ${
+                    draft.decimalDigits === d
+                      ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {d} dec
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-1 text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Symbol / Code Position
+            </p>
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+              {(['prefix', 'suffix'] as SymbolPosition[]).map((pos) => (
+                <button
+                  key={pos}
+                  type="button"
+                  onClick={() => setDraft((p) => ({ ...p, symbolPosition: pos }))}
+                  className={`min-h-[34px] rounded-md text-xs font-semibold capitalize transition-colors ${
+                    draft.symbolPosition === pos
+                      ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {pos === 'prefix' ? 'Prefix (PKR 10)' : 'Suffix (10 PKR)'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3 dark:border-slate-800 dark:bg-slate-800/50">
+            <div>
+              <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                Use Symbol Instead of Code
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {draft.useSymbolInsteadOfCode
+                  ? `Showing symbol (${draft.currencySymbol || 'Rs'}) on bills & screens`
+                  : `Showing clean code (${draft.currencyCode || 'PKR'} 0.00)`}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.useSymbolInsteadOfCode}
+              onChange={(e) =>
+                setDraft((p) => ({
+                  ...p,
+                  useSymbolInsteadOfCode: e.target.checked,
+                }))
+              }
+              className="h-4 w-4 rounded border-slate-300 text-[#0D7A5F] focus:ring-[#0D7A5F] dark:border-slate-600 dark:bg-slate-800"
+            />
+          </label>
+
+          <div>
+            <label
+              htmlFor="settings-timezone"
+              className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300"
+            >
+              <Globe2 className="h-3.5 w-3.5 text-[#0D7A5F] dark:text-emerald-400" />
+              <span>Timezone</span>
+            </label>
+            {!customTimezoneMode ? (
+              <div className="flex gap-1.5">
+                <select
+                  id="settings-timezone"
+                  value={
+                    COMMON_TIMEZONES.includes(draft.timezone)
+                      ? draft.timezone
+                      : 'Asia/Karachi'
+                  }
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      setCustomTimezoneMode(true);
+                    } else {
+                      setDraft((p) => ({ ...p, timezone: e.target.value }));
+                    }
+                  }}
+                  className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  {COMMON_TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz}
+                    </option>
+                  ))}
+                  <option value="__custom__">Enter custom IANA timezone...</option>
+                </select>
+              </div>
+            ) : (
+              <div className="flex gap-1.5">
+                <input
+                  id="settings-timezone"
+                  type="text"
+                  value={draft.timezone}
+                  onChange={(e) =>
+                    setDraft((p) => ({ ...p, timezone: e.target.value }))
+                  }
+                  placeholder="Asia/Karachi"
+                  className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomTimezoneMode(false);
+                    if (!COMMON_TIMEZONES.includes(draft.timezone)) {
+                      setDraft((p) => ({ ...p, timezone: 'Asia/Karachi' }));
+                    }
+                  }}
+                  className="rounded-lg border border-slate-300 px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  List
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="mb-1 text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Regional Date Format
+            </p>
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+              {(['DD/MM/YYYY', 'MM/DD/YYYY'] as DateFormatOption[]).map(
+                (fmtOpt) => (
+                  <button
+                    key={fmtOpt}
+                    type="button"
+                    onClick={() =>
+                      setDraft((p) => ({ ...p, dateFormat: fmtOpt }))
+                    }
+                    className={`min-h-[34px] rounded-md font-mono-tabular text-xs font-semibold transition-colors ${
+                      draft.dateFormat === fmtOpt
+                        ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {fmtOpt}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        {/* 1. Pharmacy & Receipt Details */}
+        {/* 2. Pharmacy & Receipt Details */}
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-4 flex items-center gap-2.5 border-b border-slate-100 pb-3 dark:border-slate-800">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0D7A5F]/10 text-[#0D7A5F] dark:bg-emerald-950 dark:text-emerald-400">
@@ -252,7 +562,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Pharmacy &amp; Receipt Details
+                Pharmacy Identity &amp; Receipt Details
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 Printed on ESC/POS thermal slips and A5 PDF invoices
@@ -282,17 +592,17 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
             <div>
               <label
-                htmlFor="settings-branch-address"
+                htmlFor="settings-address"
                 className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
               >
-                Branch / Address
+                Branch / Street Address
               </label>
               <input
-                id="settings-branch-address"
+                id="settings-address"
                 type="text"
-                value={draft.branchAddress}
+                value={draft.address}
                 onChange={(e) =>
-                  setDraft((p) => ({ ...p, branchAddress: e.target.value }))
+                  setDraft((p) => ({ ...p, address: e.target.value }))
                 }
                 placeholder="17 KM Ferozepur Road, Lahore"
                 className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -310,9 +620,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 <input
                   id="settings-phone"
                   type="text"
-                  value={draft.phoneNumber}
+                  value={draft.phone}
                   onChange={(e) =>
-                    setDraft((p) => ({ ...p, phoneNumber: e.target.value }))
+                    setDraft((p) => ({ ...p, phone: e.target.value }))
                   }
                   placeholder="+92 42 35950011"
                   className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -340,6 +650,47 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
             <div>
               <label
+                htmlFor="settings-website-url"
+                className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+              >
+                Website URL (Optional)
+              </label>
+              <input
+                id="settings-website-url"
+                type="url"
+                value={draft.websiteUrl}
+                onChange={(e) =>
+                  setDraft((p) => ({ ...p, websiteUrl: e.target.value }))
+                }
+                placeholder="https://clinixpharmacy.pk"
+                className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </div>
+
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3 dark:border-slate-800 dark:bg-slate-800/50">
+              <div>
+                <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  Show Website on Printed Receipts &amp; A5 PDFs
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Include website URL in receipt header when configured above
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.showWebsiteOnReceipt}
+                onChange={(e) =>
+                  setDraft((p) => ({
+                    ...p,
+                    showWebsiteOnReceipt: e.target.checked,
+                  }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-[#0D7A5F] focus:ring-[#0D7A5F] dark:border-slate-600 dark:bg-slate-800"
+              />
+            </label>
+
+            <div>
+              <label
                 htmlFor="settings-footer-note"
                 className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
               >
@@ -348,9 +699,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               <textarea
                 id="settings-footer-note"
                 rows={2}
-                value={draft.receiptFooterNote}
+                value={draft.receiptFooter}
                 onChange={(e) =>
-                  setDraft((p) => ({ ...p, receiptFooterNote: e.target.value }))
+                  setDraft((p) => ({ ...p, receiptFooter: e.target.value }))
                 }
                 placeholder="Thank you or exchange policy line..."
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -381,7 +732,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           </div>
         </section>
 
-        {/* 2. Printer & Barcode Hardware Preferences */}
+        {/* 3. Printer & Barcode Hardware Preferences */}
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-4 flex items-center gap-2.5 border-b border-slate-100 pb-3 dark:border-slate-800">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0D7A5F]/10 text-[#0D7A5F] dark:bg-emerald-950 dark:text-emerald-400">
@@ -392,7 +743,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 Printer &amp; Barcode Hardware
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                ESC/POS Bluetooth printer, paper width, and USB scanner focus
+                ESC/POS Bluetooth printer, thermal paper width (58mm / 80mm), and USB scanner focus
               </p>
             </div>
           </div>
@@ -449,7 +800,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                       key={dev.mac}
                       type="button"
                       onClick={() =>
-                        handleSelectKnownPrinter(dev.name, dev.mac)
+                        handleSelectKnownPrinter(dev.name, dev.mac, dev.width)
                       }
                       className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
                         selected
@@ -473,23 +824,23 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
               <div>
                 <p className="mb-1 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Default Receipt Paper Width
+                  Thermal Paper Width
                 </p>
                 <div className="inline-flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-                  {(['58mm', '80mm'] as ThermalWidth[]).map((w) => (
+                  {([58, 80] as const).map((w) => (
                     <button
                       key={w}
                       type="button"
                       onClick={() =>
-                        setDraft((p) => ({ ...p, paperWidth: w }))
+                        setDraft((p) => ({ ...p, thermalPaperWidth: w }))
                       }
                       className={`rounded-md px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-                        draft.paperWidth === w
+                        draft.thermalPaperWidth === w
                           ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
                           : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
                       }`}
                     >
-                      {w} ({w === '58mm' ? '32 cols' : '48 cols'})
+                      {w}mm ({w === 58 ? '32 cols' : '48 cols'})
                     </button>
                   ))}
                 </div>
@@ -509,7 +860,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                    ESC/POS Test Print Output ({draft.paperWidth})
+                    ESC/POS Test Print Output ({draft.thermalPaperWidth}mm)
                   </span>
                   <div className="flex items-center gap-2">
                     <button
@@ -530,7 +881,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 </div>
                 <pre
                   className={`mx-auto overflow-x-auto font-mono-tabular text-[11px] leading-relaxed text-slate-900 dark:text-slate-200 ${
-                    draft.paperWidth === '58mm' ? 'w-[32ch]' : 'w-[48ch]'
+                    draft.thermalPaperWidth === 58 ? 'w-[32ch]' : 'w-[48ch]'
                   }`}
                 >
                   {testPrintLines.join('\n')}
@@ -562,7 +913,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           </div>
         </section>
 
-        {/* 3. Counter & Role Display Options */}
+        {/* 4. Counter Thresholds & Role Display Options */}
         <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-4 flex items-center gap-2.5 border-b border-slate-100 pb-3 dark:border-slate-800">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0D7A5F]/10 text-[#0D7A5F] dark:bg-emerald-950 dark:text-emerald-400">
@@ -570,45 +921,22 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Counter &amp; Role Display Options
+                Counter Thresholds &amp; Role Permissions
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Currency label, counter warning thresholds, and RBAC cost/profit visibility
+                Stock/expiry warning windows and staff profit/cost visibility
               </p>
             </div>
           </div>
 
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <label
-                  htmlFor="settings-currency"
-                  className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
-                >
-                  Currency Label
-                </label>
-                <input
-                  id="settings-currency"
-                  type="text"
-                  maxLength={6}
-                  value={draft.currencyLabel}
-                  onChange={(e) =>
-                    setDraft((p) => ({
-                      ...p,
-                      currencyLabel: e.target.value.toUpperCase(),
-                    }))
-                  }
-                  placeholder="PKR"
-                  className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm font-semibold uppercase text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-              </div>
-
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label
                   htmlFor="settings-low-stock"
                   className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
                 >
-                  Low-Stock Threshold
+                  Low-Stock Threshold (Units)
                 </label>
                 <input
                   id="settings-low-stock"
@@ -622,17 +950,17 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
               <div>
                 <label
-                  htmlFor="settings-near-expiry"
+                  htmlFor="settings-expiry-alert"
                   className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
                 >
-                  Near-Expiry Window (Days)
+                  Expiry Alert Window (Days)
                 </label>
                 <input
-                  id="settings-near-expiry"
+                  id="settings-expiry-alert"
                   type="number"
                   min={1}
-                  value={nearExpiryInput}
-                  onChange={(e) => setNearExpiryInput(e.target.value)}
+                  value={expiryAlertInput}
+                  onChange={(e) => setExpiryAlertInput(e.target.value)}
                   className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm font-semibold text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -646,9 +974,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 <button
                   key={days}
                   type="button"
-                  onClick={() => setNearExpiryInput(String(days))}
+                  onClick={() => setExpiryAlertInput(String(days))}
                   className={`rounded-lg border px-2.5 py-1 font-mono-tabular text-xs font-semibold transition-colors ${
-                    Number(nearExpiryInput) === days
+                    Number(expiryAlertInput) === days
                       ? 'border-[#0D7A5F] bg-[#0D7A5F] text-white'
                       : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
                   }`}
@@ -657,6 +985,28 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 </button>
               ))}
             </div>
+
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3 dark:border-slate-800 dark:bg-slate-800/50">
+              <div>
+                <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  Show Cost &amp; Net Profit to Counter Staff
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Keep OFF (recommended) so purchase cost and margin remain visible only to Admin &amp; Manager
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.showProfitToStaff}
+                onChange={(e) =>
+                  setDraft((p) => ({
+                    ...p,
+                    showProfitToStaff: e.target.checked,
+                  }))
+                }
+                className="h-4 w-4 rounded border-slate-300 text-[#0D7A5F] focus:ring-[#0D7A5F] dark:border-slate-600 dark:bg-slate-800"
+              />
+            </label>
 
             <div>
               <label
@@ -686,20 +1036,22 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
               <p
                 className={`mt-2 rounded-lg border px-3 py-2 text-xs font-medium ${
-                  isRoleManagerOrAdmin
+                  isRoleManagerOrAdmin || draft.showProfitToStaff
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
                     : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
                 }`}
               >
                 {isRoleManagerOrAdmin
                   ? 'Admin / Manager mode: Item Cost and Net Profit are visible on the POS checkout panel and Credit / Khata billing is enabled.'
-                  : 'Cashier / Sales Staff mode: Item Cost, Net Profit, and Khata credit ledger options are hidden on the POS billing screen.'}
+                  : draft.showProfitToStaff
+                    ? 'Counter Staff mode (Profit Override ON): Cost & Net Profit are displayed to staff, while Khata credit remains restricted.'
+                    : 'Cashier / Sales Staff mode: Item Cost, Net Profit, and Khata credit ledger options are hidden on the POS billing screen.'}
               </p>
             </div>
           </div>
         </section>
 
-        {/* 4. Data Backup & Reset Safety */}
+        {/* 5. Data Backup & Reset Safety */}
         <section className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
           <div>
             <div className="mb-4 flex items-center gap-2.5 border-b border-slate-100 pb-3 dark:border-slate-800">
@@ -708,10 +1060,10 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Data Backup &amp; Reset Safety
+                  Data Backup &amp; Safe Reset
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Save a portable copy of your pharmacy database or reset settings safely
+                  Export full pharmacy database JSON or reset settings safely
                 </p>
               </div>
             </div>
@@ -747,10 +1099,10 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               <div className="flex flex-col justify-between gap-3 rounded-lg border border-slate-200 p-3.5 dark:border-slate-800 sm:flex-row sm:items-center">
                 <div>
                   <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                    Export / Backup Local Database
+                    Export Backup
                   </p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Downloads a complete backup copy of settings, medicines, sales, purchases, expenses, and Khata ledger
+                    Downloads a complete backup of settings, medicines, sales, purchases, expenses, and Khata ledger
                   </p>
                 </div>
                 <button
@@ -759,7 +1111,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   className="inline-flex min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white whitespace-nowrap transition-colors hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-700"
                 >
                   <DatabaseBackup className="h-4 w-4" />
-                  <span>Export / Backup DB</span>
+                  <span>Export Backup</span>
                 </button>
               </div>
 
@@ -769,7 +1121,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     Reset Settings to Defaults
                   </p>
                   <p className="text-[11px] text-amber-800 dark:text-amber-300/90">
-                    Restores receipt, printer, and counter preferences only. Never wipes sales, stock, or Khata balances.
+                    Restores currency, pharmacy, printer, and counter preferences only. Never wipes products, sales, purchases, or parties.
                   </p>
                 </div>
                 <button
@@ -828,10 +1180,10 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
             </div>
 
             <p className="mt-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-              This will restore pharmacy details, printer width, USB scanner focus, low-stock/expiry thresholds, and counter role back to default values.
+              This will restore currency (PKR 0.00), timezone (Asia/Karachi), pharmacy details, thermal paper width (80mm), thresholds, and counter role back to defaults.
             </p>
             <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-              Safety guarantee: Your {itemCount} inventory medicines, {saleCount} sales receipts, and {partyCount} customer/supplier Khata balances will NOT be deleted or modified.
+              Safety guarantee: Your {itemCount} inventory medicines, {saleCount} sales receipts, and {partyCount} customer/supplier Khata balances will NOT be cleared or modified.
             </p>
 
             <div className="mt-5 flex justify-end gap-2">

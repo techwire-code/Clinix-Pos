@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -10,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
+import '../utils/currency_formatter.dart';
 
 /// Professional A5 PDF Invoice Generator & One-Tap Share Service
 /// using `pdf`, `printing`, and `share_plus` for WhatsApp & Email dispatch.
@@ -25,16 +25,16 @@ class PdfInvoiceService {
     PharmacySettings? settings,
   }) async {
     final cfg = settings ?? PharmacySettings.defaults();
-    final cur =
-        cfg.currencyLabel.trim().isEmpty ? 'PKR' : cfg.currencyLabel.trim();
+    final curUnit = CurrencyFormatter.unitLabel(cfg);
     final doc = pw.Document(
       title: 'Invoice ${sale.invoiceNumber} - ${cfg.pharmacyName}',
       author: cfg.pharmacyName,
     );
 
-    final currency = NumberFormat('#,##0.00');
-    final parsedDate = DateTime.tryParse(sale.createdAt) ?? DateTime.now();
-    final formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(parsedDate);
+    final formattedDate =
+        CurrencyFormatter.formatDate(sale.createdAt, cfg, includeTime: true);
+    String fmtMoney(double val) => CurrencyFormatter.format(val, cfg);
+    final int dec = cfg.decimalDigits;
 
     const primaryColor = PdfColor.fromInt(0xFF0D7A5F);
     const inkColor = PdfColor.fromInt(0xFF0F172A);
@@ -75,7 +75,7 @@ class PdfInvoiceService {
                         ),
                         pw.SizedBox(height: 2),
                         pw.Text(
-                          cfg.branchAddress,
+                          cfg.address,
                           style: const pw.TextStyle(
                             fontSize: 8.5,
                             color: inkColor,
@@ -83,8 +83,8 @@ class PdfInvoiceService {
                         ),
                         pw.Text(
                           [
-                            if (cfg.phoneNumber.trim().isNotEmpty)
-                              'Tel: ${cfg.phoneNumber.trim()}',
+                            if (cfg.phone.trim().isNotEmpty)
+                              'Tel: ${cfg.phone.trim()}',
                             if (cfg.licenseNumber.trim().isNotEmpty)
                               'Lic: ${cfg.licenseNumber.trim()}',
                           ].join(' · '),
@@ -93,6 +93,15 @@ class PdfInvoiceService {
                             color: mutedColor,
                           ),
                         ),
+                        if (cfg.showWebsiteOnReceipt &&
+                            cfg.websiteUrl.trim().isNotEmpty)
+                          pw.Text(
+                            cfg.websiteUrl.trim(),
+                            style: const pw.TextStyle(
+                              fontSize: 7.5,
+                              color: primaryColor,
+                            ),
+                          ),
                       ],
                     ),
                     pw.Column(
@@ -213,7 +222,13 @@ class PdfInvoiceService {
                   3: pw.Alignment.centerRight,
                   4: pw.Alignment.centerRight,
                 },
-                headers: ['Item / Batch', 'Qty', 'Rate', 'Disc', 'Amount'],
+                headers: [
+                  'Item / Batch',
+                  'Qty',
+                  'Rate ($curUnit)',
+                  'Disc',
+                  'Amount ($curUnit)',
+                ],
                 data: items.map((line) {
                   final title = line.batchNumber.isNotEmpty
                       ? '${line.itemName}\nBatch: ${line.batchNumber}'
@@ -221,11 +236,11 @@ class PdfInvoiceService {
                   return [
                     title,
                     '${line.quantity}',
-                    currency.format(line.unitPrice),
+                    line.unitPrice.toStringAsFixed(dec),
                     line.itemDiscount > 0
-                        ? '-${currency.format(line.itemDiscount)}'
-                        : '0.00',
-                    currency.format(line.lineTotal),
+                        ? '-${line.itemDiscount.toStringAsFixed(dec)}'
+                        : 0.0.toStringAsFixed(dec),
+                    line.lineTotal.toStringAsFixed(dec),
                   ];
                 }).toList(),
               ),
@@ -237,7 +252,7 @@ class PdfInvoiceService {
                 mainAxisAlignment: pw.MainAxisAlignment.end,
                 children: [
                   pw.Container(
-                    width: 175,
+                    width: 185,
                     padding: const pw.EdgeInsets.all(8),
                     decoration: pw.BoxDecoration(
                       border: pw.Border.all(color: borderColor, width: 0.8),
@@ -245,21 +260,34 @@ class PdfInvoiceService {
                     ),
                     child: pw.Column(
                       children: [
-                        _summaryRow(
-                            'Subtotal', '$cur ${currency.format(sale.subtotal)}'),
+                        _summaryRow('Subtotal', fmtMoney(sale.subtotal)),
                         pw.SizedBox(height: 3),
                         _summaryRow(
                           'Total Discount',
-                          '-$cur ${currency.format(sale.discountAmount)}',
+                          '-${fmtMoney(sale.discountAmount)}',
                           valueColor: const PdfColor.fromInt(0xFFB45309),
                         ),
                         pw.Divider(color: borderColor, height: 8),
                         _summaryRow(
                           'Net Payable',
-                          '$cur ${currency.format(sale.netPayable)}',
+                          fmtMoney(sale.netPayable),
                           isBold: true,
                           valueColor: primaryColor,
                         ),
+                        if (sale.cashReceived != null) ...[
+                          pw.SizedBox(height: 3),
+                          _summaryRow(
+                            'Cash Received',
+                            fmtMoney(sale.cashReceived!),
+                          ),
+                          _summaryRow(
+                            'Change',
+                            fmtMoney(
+                              sale.changeReturned ??
+                                  (sale.cashReceived! - sale.netPayable),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -278,9 +306,9 @@ class PdfInvoiceService {
                 ),
                 child: pw.Column(
                   children: [
-                    if (cfg.receiptFooterNote.trim().isNotEmpty)
+                    if (cfg.receiptFooter.trim().isNotEmpty)
                       pw.Text(
-                        cfg.receiptFooterNote.trim(),
+                        cfg.receiptFooter.trim(),
                         textAlign: pw.TextAlign.center,
                         style: const pw.TextStyle(
                           fontSize: 6.5,
@@ -289,7 +317,13 @@ class PdfInvoiceService {
                       ),
                     pw.SizedBox(height: 3),
                     pw.Text(
-                      '${cfg.pharmacyName} · ${cfg.branchAddress}',
+                      [
+                        cfg.pharmacyName,
+                        cfg.address,
+                        if (cfg.showWebsiteOnReceipt &&
+                            cfg.websiteUrl.trim().isNotEmpty)
+                          cfg.websiteUrl.trim(),
+                      ].join(' · '),
                       style: pw.TextStyle(
                         fontSize: 7,
                         fontWeight: pw.FontWeight.bold,
@@ -365,9 +399,6 @@ class PdfInvoiceService {
   }) async {
     final activeSettings =
         settings ?? await DatabaseHelper.instance.getSettings();
-    final cur = activeSettings.currencyLabel.trim().isEmpty
-        ? 'PKR'
-        : activeSettings.currencyLabel.trim();
     final bytes = await generateA5InvoiceBytes(
       sale: sale,
       items: items,
@@ -381,7 +412,7 @@ class PdfInvoiceService {
       [XFile(file.path, mimeType: 'application/pdf')],
       subject: '${activeSettings.pharmacyName} Invoice ${sale.invoiceNumber}',
       text:
-          'Assalam-o-Alaikum, please find attached your invoice (${sale.invoiceNumber}) from ${activeSettings.pharmacyName}, ${activeSettings.branchAddress}. Net Payable: $cur ${sale.netPayable.toStringAsFixed(2)}.',
+          'Assalam-o-Alaikum, please find attached your invoice (${sale.invoiceNumber}) from ${activeSettings.pharmacyName}, ${activeSettings.address}. Net Payable: ${CurrencyFormatter.format(sale.netPayable, activeSettings)}.',
     );
   }
 }

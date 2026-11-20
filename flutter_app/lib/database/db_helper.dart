@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -16,7 +18,8 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
   static const String _dbName = 'clinix_pharmacy_pos.db';
-  static const int _dbVersion = 2;
+  static const int _dbVersion = 3;
+  static const String _settingsPrefsKey = 'clinix_app_settings_v2';
 
   Database? _database;
 
@@ -52,17 +55,32 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY CHECK(id = 1),
         pharmacy_name TEXT NOT NULL,
         branch_address TEXT NOT NULL,
+        address TEXT NOT NULL DEFAULT '17 KM Ferozepur Road, Lahore',
         phone_number TEXT NOT NULL DEFAULT '',
+        phone TEXT NOT NULL DEFAULT '+92 42 35950011',
         license_number TEXT NOT NULL DEFAULT '',
+        website_url TEXT NOT NULL DEFAULT '',
         receipt_footer_note TEXT NOT NULL DEFAULT '',
-        auto_print_receipt INTEGER NOT NULL DEFAULT 0,
+        receipt_footer TEXT NOT NULL DEFAULT 'Unopened medicines with original invoice may be exchanged within 7 days.',
+        auto_print_receipt INTEGER NOT NULL DEFAULT 1,
         saved_printer_name TEXT,
         saved_printer_mac TEXT,
         paper_width_mm INTEGER NOT NULL DEFAULT 80,
+        thermal_paper_width INTEGER NOT NULL DEFAULT 80,
+        show_website_on_receipt INTEGER NOT NULL DEFAULT 0,
         prefer_usb_scanner_focus INTEGER NOT NULL DEFAULT 1,
         currency_label TEXT NOT NULL DEFAULT 'PKR',
+        currency_code TEXT NOT NULL DEFAULT 'PKR',
+        currency_symbol TEXT NOT NULL DEFAULT 'Rs',
+        use_symbol_instead_of_code INTEGER NOT NULL DEFAULT 0,
+        decimal_digits INTEGER NOT NULL DEFAULT 2,
+        symbol_position TEXT NOT NULL DEFAULT 'prefix',
+        timezone TEXT NOT NULL DEFAULT 'Asia/Karachi',
+        date_format TEXT NOT NULL DEFAULT 'DD/MM/YYYY',
         low_stock_threshold INTEGER NOT NULL DEFAULT 10,
-        near_expiry_days INTEGER NOT NULL DEFAULT 60,
+        near_expiry_days INTEGER NOT NULL DEFAULT 30,
+        expiry_alert_days INTEGER NOT NULL DEFAULT 30,
+        show_profit_to_staff INTEGER NOT NULL DEFAULT 0,
         active_user_role TEXT NOT NULL DEFAULT 'admin',
         updated_at TEXT NOT NULL
       )
@@ -75,17 +93,34 @@ class DatabaseHelper {
     const expectedColumns = <String, String>{
       'pharmacy_name': "TEXT NOT NULL DEFAULT 'Clinix Community Pharmacy'",
       'branch_address': "TEXT NOT NULL DEFAULT '17 KM Ferozepur Road, Lahore'",
-      'phone_number': "TEXT NOT NULL DEFAULT ''",
-      'license_number': "TEXT NOT NULL DEFAULT ''",
-      'receipt_footer_note': "TEXT NOT NULL DEFAULT ''",
-      'auto_print_receipt': 'INTEGER NOT NULL DEFAULT 0',
+      'address': "TEXT NOT NULL DEFAULT '17 KM Ferozepur Road, Lahore'",
+      'phone_number': "TEXT NOT NULL DEFAULT '+92 42 35950011'",
+      'phone': "TEXT NOT NULL DEFAULT '+92 42 35950011'",
+      'license_number': "TEXT NOT NULL DEFAULT 'DL-LHR-04892'",
+      'website_url': "TEXT NOT NULL DEFAULT ''",
+      'receipt_footer_note':
+          "TEXT NOT NULL DEFAULT 'Unopened medicines with original invoice may be exchanged within 7 days.'",
+      'receipt_footer':
+          "TEXT NOT NULL DEFAULT 'Unopened medicines with original invoice may be exchanged within 7 days.'",
+      'auto_print_receipt': 'INTEGER NOT NULL DEFAULT 1',
       'saved_printer_name': 'TEXT',
       'saved_printer_mac': 'TEXT',
       'paper_width_mm': 'INTEGER NOT NULL DEFAULT 80',
+      'thermal_paper_width': 'INTEGER NOT NULL DEFAULT 80',
+      'show_website_on_receipt': 'INTEGER NOT NULL DEFAULT 0',
       'prefer_usb_scanner_focus': 'INTEGER NOT NULL DEFAULT 1',
       'currency_label': "TEXT NOT NULL DEFAULT 'PKR'",
+      'currency_code': "TEXT NOT NULL DEFAULT 'PKR'",
+      'currency_symbol': "TEXT NOT NULL DEFAULT 'Rs'",
+      'use_symbol_instead_of_code': 'INTEGER NOT NULL DEFAULT 0',
+      'decimal_digits': 'INTEGER NOT NULL DEFAULT 2',
+      'symbol_position': "TEXT NOT NULL DEFAULT 'prefix'",
+      'timezone': "TEXT NOT NULL DEFAULT 'Asia/Karachi'",
+      'date_format': "TEXT NOT NULL DEFAULT 'DD/MM/YYYY'",
       'low_stock_threshold': 'INTEGER NOT NULL DEFAULT 10',
-      'near_expiry_days': 'INTEGER NOT NULL DEFAULT 60',
+      'near_expiry_days': 'INTEGER NOT NULL DEFAULT 30',
+      'expiry_alert_days': 'INTEGER NOT NULL DEFAULT 30',
+      'show_profit_to_staff': 'INTEGER NOT NULL DEFAULT 0',
       'active_user_role': "TEXT NOT NULL DEFAULT 'admin'",
       'updated_at': "TEXT NOT NULL DEFAULT ''",
     };
@@ -110,6 +145,20 @@ class DatabaseHelper {
           conflictAlgorithm: ConflictAlgorithm.ignore,
         );
       }
+    }
+    if (oldVersion < 3) {
+      await _createSettingsTable(db);
+      // Carry forward legacy v2 values into unified v3 columns when upgrading
+      await db.execute('''
+        UPDATE app_settings
+        SET address = CASE WHEN TRIM(branch_address) != '' THEN branch_address ELSE address END,
+            phone = CASE WHEN TRIM(phone_number) != '' THEN phone_number ELSE phone END,
+            receipt_footer = CASE WHEN TRIM(receipt_footer_note) != '' THEN receipt_footer_note ELSE receipt_footer END,
+            thermal_paper_width = CASE WHEN paper_width_mm IN (58, 80) THEN paper_width_mm ELSE thermal_paper_width END,
+            currency_code = CASE WHEN TRIM(currency_label) != '' THEN UPPER(TRIM(currency_label)) ELSE currency_code END,
+            expiry_alert_days = CASE WHEN near_expiry_days > 0 THEN near_expiry_days ELSE expiry_alert_days END
+        WHERE id = 1
+      ''');
     }
   }
 
@@ -770,6 +819,30 @@ class DatabaseHelper {
 
   // ==================== APP SETTINGS & BACKUP ====================
 
+  Future<void> _mirrorSettingsToPrefs(PharmacySettings settings) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_settingsPrefsKey, jsonEncode(settings.toJson()));
+    } catch (_) {
+      // Non-fatal: SQLite remains primary persistence store
+    }
+  }
+
+  Future<PharmacySettings?> _readSettingsFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_settingsPrefsKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return PharmacySettings.fromJson(decoded);
+      }
+    } catch (_) {
+      // Ignore malformed JSON cache
+    }
+    return null;
+  }
+
   Future<PharmacySettings> getSettings() async {
     final db = await database;
     await _createSettingsTable(db);
@@ -779,15 +852,19 @@ class DatabaseHelper {
       limit: 1,
     );
     if (rows.isEmpty) {
-      final defaults = PharmacySettings.defaults();
+      final initial =
+          await _readSettingsFromPrefs() ?? PharmacySettings.defaults();
       await db.insert(
         'app_settings',
-        defaults.toMap(),
+        initial.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      return defaults;
+      await _mirrorSettingsToPrefs(initial);
+      return initial;
     }
-    return PharmacySettings.fromMap(rows.first);
+    final loaded = PharmacySettings.fromMap(rows.first);
+    await _mirrorSettingsToPrefs(loaded);
+    return loaded;
   }
 
   Future<PharmacySettings> saveSettings(PharmacySettings settings) async {
@@ -814,6 +891,7 @@ class DatabaseHelper {
         where: 'id = 1',
       );
     }
+    await _mirrorSettingsToPrefs(settings);
     return settings;
   }
 

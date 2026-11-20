@@ -7,6 +7,7 @@ import printerSettingsRaw from '../../flutter_app/lib/screens/printer_settings_s
 import settingsScreenRaw from '../../flutter_app/lib/screens/settings_screen.dart?raw';
 import printerServiceRaw from '../../flutter_app/lib/services/printer_service.dart?raw';
 import pdfInvoiceServiceRaw from '../../flutter_app/lib/services/pdf_invoice_service.dart?raw';
+import currencyFormatterRaw from '../../flutter_app/lib/utils/currency_formatter.dart?raw';
 
 export interface FlutterSourceFile {
   id: string;
@@ -50,9 +51,18 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
     path: 'lib/screens/settings_screen.dart',
     title: 'Pharmacy & Counter Settings',
     summary:
-      'SQLite-persisted pharmacy/receipt details, thermal printer & USB barcode preferences, threshold/role controls, DB backup export, and safe reset.',
+      'Multi-currency, regional format, pharmacy/receipt details, thermal printer & USB scanner preferences, threshold/role controls, DB backup export, and safe reset.',
     language: 'dart',
     content: settingsScreenRaw,
+  },
+  {
+    id: 'currency_formatter',
+    path: 'lib/utils/currency_formatter.dart',
+    title: 'Currency & Regional Formatter',
+    summary:
+      'Centralized CurrencyFormatter with 9 currency presets (PKR, USD, EUR, GBP, AED, SAR, INR, CAD, AUD), symbol/code switching, decimals, prefix/suffix, and timezone/date formatting.',
+    language: 'dart',
+    content: currencyFormatterRaw,
   },
   {
     id: 'printer_service',

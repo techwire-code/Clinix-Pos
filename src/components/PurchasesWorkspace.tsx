@@ -12,15 +12,22 @@ import {
   Party,
   PaymentMode,
   PharmacyItem,
+  PharmacySettings,
   PurchaseDraftLine,
   PurchaseRecord,
 } from '../types/pharmacy';
-import { calculateUnitPrice } from '../services/localDb';
+import {
+  calculateUnitPrice,
+  formatDateBySettings,
+  formatMoney,
+  getCurrencyLabel,
+} from '../services/localDb';
 
 interface PurchasesWorkspaceProps {
   items: PharmacyItem[];
   parties: Party[];
   purchases: PurchaseRecord[];
+  settings?: PharmacySettings;
   onCompletePurchase: (params: {
     supplier: Party;
     supplierInvoiceNo: string;
@@ -42,10 +49,12 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
   items,
   parties,
   purchases,
+  settings,
   onCompletePurchase,
   onAddSupplier,
   onSettleSupplierBalance,
 }) => {
+  const cur = getCurrencyLabel(settings);
   const [subView, setSubView] = useState<SubView>('bills');
   const [search, setSearch] = useState('');
   const [expandedPurchaseId, setExpandedPurchaseId] = useState<number | null>(
@@ -343,7 +352,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
             Total Purchases
           </p>
           <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
-            PKR {metrics.totalPurchased.toLocaleString()}
+            {formatMoney(metrics.totalPurchased, settings)}
           </p>
           <p className="mt-0.5 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
             {purchases.length} distributor bills
@@ -355,7 +364,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
             Supplier Payables (To Pay)
           </p>
           <p className="mt-1 font-mono-tabular text-2xl font-bold text-amber-700 dark:text-amber-400">
-            PKR {metrics.totalToPay.toLocaleString()}
+            {formatMoney(metrics.totalToPay, settings)}
           </p>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             Outstanding distributor dues
@@ -501,9 +510,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                                 </p>
                                 <p className="font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
                                   Inv: {pur.supplierInvoiceNo} ·{' '}
-                                  {new Date(pur.createdAt).toLocaleDateString(
-                                    'en-PK',
-                                  )}
+                                  {formatDateBySettings(pur.createdAt, settings)}
                                 </p>
                               </div>
                             </div>
@@ -521,10 +528,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                             {pur.paymentMode}
                           </td>
                           <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                            PKR {pur.totalAmount.toFixed(2)}
+                            {formatMoney(pur.totalAmount, settings)}
                           </td>
                           <td className="px-4 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                            PKR {pur.paidAmount.toFixed(2)}
+                            {formatMoney(pur.paidAmount, settings)}
                           </td>
                           <td
                             className={`px-4 py-3 text-right font-mono-tabular font-semibold ${
@@ -534,7 +541,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                             }`}
                           >
                             {pur.balanceDue > 0
-                              ? `PKR ${pur.balanceDue.toFixed(2)}`
+                              ? formatMoney(pur.balanceDue, settings)
                               : 'Paid'}
                           </td>
                         </tr>
@@ -576,10 +583,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                                         {line.quantity}
                                       </td>
                                       <td className="py-2 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                                        {line.unitCost.toFixed(2)}
+                                        {formatMoney(line.unitCost, settings)}
                                       </td>
                                       <td className="py-2 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                                        PKR {line.lineTotal.toFixed(2)}
+                                        {formatMoney(line.lineTotal, settings)}
                                       </td>
                                     </tr>
                                   ))}
@@ -642,7 +649,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                           {stats.count}
                         </td>
                         <td className="px-5 py-3.5 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
-                          PKR {stats.total.toFixed(2)}
+                          {formatMoney(stats.total, settings)}
                         </td>
                         <td
                           className={`px-5 py-3.5 text-right font-mono-tabular font-semibold ${
@@ -651,7 +658,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                               : 'text-slate-500 dark:text-slate-400'
                           }`}
                         >
-                          PKR {sup.balance.toFixed(2)}
+                          {formatMoney(sup.balance, settings)}
                         </td>
                         <td className="px-5 py-3.5 text-right">
                           <div className="inline-flex items-center gap-2">
@@ -756,7 +763,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     )}
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name} (To Pay: PKR {s.balance.toFixed(0)})
+                        {s.name} (To Pay: {formatMoney(s.balance, settings)})
                       </option>
                     ))}
                   </select>
@@ -908,7 +915,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
-                      2. Box Cost (PKR)
+                      2. Box Cost ({cur})
                     </label>
                     <input
                       type="number"
@@ -922,7 +929,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
-                      3. Box Selling (PKR)
+                      3. Box Selling ({cur})
                     </label>
                     <input
                       type="number"
@@ -975,13 +982,13 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     <span className="text-slate-600 dark:text-slate-400">
                       Auto Unit Cost:{' '}
                       <strong className="font-mono-tabular text-slate-900 dark:text-slate-100">
-                        PKR {computedUnitCost.toFixed(2)}
+                        {formatMoney(computedUnitCost, settings)}
                       </strong>
                     </span>
                     <span className="text-slate-600 dark:text-slate-400">
                       Auto Unit Selling:{' '}
                       <strong className="font-mono-tabular text-[#0D7A5F] dark:text-emerald-400">
-                        PKR {computedUnitSelling.toFixed(2)} / {lineUnit || 'Unit'}
+                        {formatMoney(computedUnitSelling, settings)} / {lineUnit || 'Unit'}
                       </strong>
                     </span>
                   </div>
@@ -1026,10 +1033,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                             {line.quantity}
                           </td>
                           <td className="px-3 py-2 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
-                            {line.unitCost.toFixed(2)}
+                            {formatMoney(line.unitCost, settings)}
                           </td>
                           <td className="px-3 py-2 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                            {(line.unitCost * line.quantity).toFixed(2)}
+                            {formatMoney(line.unitCost * line.quantity, settings)}
                           </td>
                           <td className="px-3 py-2 text-right">
                             <button
@@ -1074,7 +1081,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                    Paid Amount (PKR)
+                    Paid Amount ({cur})
                   </label>
                   <input
                     type="number"
@@ -1091,13 +1098,13 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   <div className="flex justify-between text-slate-600 dark:text-slate-300">
                     <span>Total Bill</span>
                     <span className="font-mono-tabular font-bold text-slate-900 dark:text-slate-100">
-                      PKR {draftTotalAmount.toFixed(2)}
+                      {formatMoney(draftTotalAmount, settings)}
                     </span>
                   </div>
                   <div className="mt-1 flex justify-between text-amber-800 dark:text-amber-400">
                     <span>Added to To Pay</span>
                     <span className="font-mono-tabular font-semibold">
-                      PKR {draftBalanceDue.toFixed(2)}
+                      {formatMoney(draftBalanceDue, settings)}
                     </span>
                   </div>
                 </div>
@@ -1174,7 +1181,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                  Opening To Pay Balance (PKR)
+                  Opening To Pay Balance ({cur})
                 </label>
                 <input
                   type="number"
@@ -1219,14 +1226,14 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               Record Supplier Payment
             </h3>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              {settleTarget.name} · Current To Pay: PKR{' '}
+              {settleTarget.name} · Current To Pay:{' '}
               <span className="font-mono-tabular font-semibold text-slate-700 dark:text-slate-200">
-                {settleTarget.balance.toFixed(2)}
+                {formatMoney(settleTarget.balance, settings)}
               </span>
             </p>
             <div className="mt-4">
               <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Payment Amount (PKR)
+                Payment Amount ({cur})
               </label>
               <input
                 required

@@ -1,4 +1,9 @@
 import { PharmacySettings, SaleRecord, ThermalWidth } from '../types/pharmacy';
+import {
+  formatDateBySettings,
+  formatMoney,
+  toThermalWidth,
+} from './localDb';
 
 function padRight(text: string, width: number): string {
   return text.length >= width ? text.slice(0, width) : text.padEnd(width, ' ');
@@ -37,16 +42,25 @@ export function generateEscPosReceipt(
   const pharmacyName = sanitizeAscii(
     settings?.pharmacyName?.trim() || 'CLINIX COMMUNITY PHARMACY',
   ).toUpperCase();
-  const branchAddress = sanitizeAscii(
-    settings?.branchAddress?.trim() || '17 KM Ferozepur Road, Lahore',
+  const address = sanitizeAscii(
+    settings?.address?.trim() || '17 KM Ferozepur Road, Lahore',
   );
-  const phoneNumber = sanitizeAscii(settings?.phoneNumber?.trim() || '');
+  const phone = sanitizeAscii(settings?.phone?.trim() || '');
   const licenseNumber = sanitizeAscii(settings?.licenseNumber?.trim() || '');
+  const websiteUrl =
+    settings?.showWebsiteOnReceipt && settings?.websiteUrl?.trim()
+      ? sanitizeAscii(settings.websiteUrl.trim())
+      : '';
   const footerNote = sanitizeAscii(
-    settings?.receiptFooterNote?.trim() ||
+    settings?.receiptFooter?.trim() ||
       'Exchange within 7 days with intact pack',
   );
-  const cur = sanitizeAscii(settings?.currencyLabel?.trim() || 'PKR').toUpperCase();
+  const digits = settings?.decimalDigits ?? 2;
+
+  const fmt = (val: number) =>
+    sanitizeAscii(
+      formatMoney(val, settings, { asciiOnly: true, grouping: false }),
+    );
 
   const previewLines: string[] = [];
   const bytes: number[] = [];
@@ -70,13 +84,9 @@ export function generateEscPosReceipt(
     bytes.push(0x0a);
   };
 
-  const dateFormatted = new Date(sale.createdAt).toLocaleString('en-PK', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const dateFormatted = sanitizeAscii(
+    formatDateBySettings(sale.createdAt, settings, { includeTime: true }),
+  );
 
   // ESC @ (Initialize) + ESC t 0 (PC437)
   bytes.push(0x1b, 0x40, 0x1b, 0x74, 0x00);
@@ -85,12 +95,15 @@ export function generateEscPosReceipt(
   bytes.push(0x1b, 0x61, 0x01, 0x1b, 0x45, 0x01, 0x1d, 0x21, 0x11);
   centerText(pharmacyName);
   bytes.push(0x1d, 0x21, 0x00, 0x1b, 0x45, 0x00);
-  centerText(branchAddress);
-  if (phoneNumber) {
-    centerText(`Tel: ${phoneNumber}`);
+  centerText(address);
+  if (phone) {
+    centerText(`Tel: ${phone}`);
   }
   if (licenseNumber) {
     centerText(`Lic: ${licenseNumber}`);
+  }
+  if (websiteUrl) {
+    centerText(websiteUrl);
   }
   pushTextLine('='.repeat(cols));
 
@@ -118,14 +131,17 @@ export function generateEscPosReceipt(
   pushTextLine('-'.repeat(cols));
 
   for (const item of sale.items) {
-    const totalStr = item.lineTotal.toFixed(2);
+    const totalStr = item.lineTotal.toFixed(digits);
     if (cols >= 48) {
-      const discStr = item.itemDiscount > 0 ? `-${item.itemDiscount.toFixed(0)}` : '0';
+      const discStr =
+        item.itemDiscount > 0 ? `-${item.itemDiscount.toFixed(0)}` : '0';
       pushTextLine(
         `${padRight(truncate(item.itemName, 21), 22)}${padLeft(String(item.quantity), 5)}${padLeft(discStr, 9)}${padLeft(totalStr, 12)}`,
       );
       if (item.batchNumber) {
-        pushTextLine(`  Batch: ${item.batchNumber} @ ${item.unitPrice.toFixed(2)}`);
+        pushTextLine(
+          `  Batch: ${item.batchNumber} @ ${item.unitPrice.toFixed(digits)}`,
+        );
       }
     } else {
       pushTextLine(
@@ -133,29 +149,27 @@ export function generateEscPosReceipt(
       );
       if (item.itemDiscount > 0) {
         pushTextLine(
-          `  Rate:${item.unitPrice.toFixed(0)} Disc:-${item.itemDiscount.toFixed(0)}`,
+          `  Rate:${item.unitPrice.toFixed(digits)} Disc:-${item.itemDiscount.toFixed(0)}`,
         );
       }
     }
   }
 
   pushTextLine('-'.repeat(cols));
-  pushTextLine(twoCol('Subtotal:', `${cur} ${sale.subtotal.toFixed(2)}`, cols));
+  pushTextLine(twoCol('Subtotal:', fmt(sale.subtotal), cols));
   if (sale.discountAmount > 0) {
     pushTextLine(
-      twoCol('Total Discount:', `-${cur} ${sale.discountAmount.toFixed(2)}`, cols),
+      twoCol('Total Discount:', `-${fmt(sale.discountAmount)}`, cols),
     );
   }
 
   bytes.push(0x1b, 0x45, 0x01, 0x1d, 0x21, 0x01);
-  pushTextLine(twoCol('NET PAYABLE:', `${cur} ${sale.netPayable.toFixed(2)}`, cols));
+  pushTextLine(twoCol('NET PAYABLE:', fmt(sale.netPayable), cols));
   bytes.push(0x1d, 0x21, 0x00, 0x1b, 0x45, 0x00);
   if (sale.cashReceived !== undefined) {
-    pushTextLine(
-      twoCol('Cash Received:', `${cur} ${sale.cashReceived.toFixed(2)}`, cols),
-    );
+    pushTextLine(twoCol('Cash Received:', fmt(sale.cashReceived), cols));
     const bal = sale.changeReturned ?? sale.cashReceived - sale.netPayable;
-    pushTextLine(twoCol('Balance / Change:', `${cur} ${bal.toFixed(2)}`, cols));
+    pushTextLine(twoCol('Balance / Change:', fmt(bal), cols));
   }
   pushTextLine('='.repeat(cols));
 
@@ -211,5 +225,9 @@ export function generateTestEscPosReceipt(
       },
     ],
   };
-  return generateEscPosReceipt(sampleSale, settings.paperWidth, settings);
+  return generateEscPosReceipt(
+    sampleSale,
+    toThermalWidth(settings.thermalPaperWidth),
+    settings,
+  );
 }

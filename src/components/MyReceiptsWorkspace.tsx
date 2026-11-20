@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Download, Printer, Receipt, Search, Share2 } from 'lucide-react';
-import { SaleRecord } from '../types/pharmacy';
+import { PharmacySettings, SaleRecord } from '../types/pharmacy';
+import { formatDateBySettings, formatMoney } from '../services/localDb';
 import {
   downloadA5InvoicePdf,
   shareInvoiceSummary,
@@ -9,12 +10,14 @@ import {
 interface MyReceiptsWorkspaceProps {
   sales: SaleRecord[];
   staffName: string;
+  settings?: PharmacySettings;
   onOpenInvoiceModal: (sale: SaleRecord) => void;
 }
 
 export const MyReceiptsWorkspace: React.FC<MyReceiptsWorkspaceProps> = ({
   sales,
   staffName,
+  settings,
   onOpenInvoiceModal,
 }) => {
   const [search, setSearch] = useState('');
@@ -44,7 +47,7 @@ export const MyReceiptsWorkspace: React.FC<MyReceiptsWorkspaceProps> = ({
 
   const handleShare = async (sale: SaleRecord) => {
     try {
-      const outcome = await shareInvoiceSummary(sale);
+      const outcome = await shareInvoiceSummary(sale, settings);
       setShareNote(
         outcome === 'shared'
           ? `Shared receipt ${sale.invoiceNumber}`
@@ -155,16 +158,11 @@ export const MyReceiptsWorkspace: React.FC<MyReceiptsWorkspaceProps> = ({
                     (sum, line) => sum + line.quantity,
                     0,
                   );
-                  const dt = new Date(sale.createdAt);
-                  const dateLabel = Number.isNaN(dt.getTime())
-                    ? sale.createdAt
-                    : dt.toLocaleString('en-PK', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      });
+                  const dateLabel = formatDateBySettings(
+                    sale.createdAt,
+                    settings,
+                    { includeTime: true },
+                  );
 
                   return (
                     <tr
@@ -191,7 +189,7 @@ export const MyReceiptsWorkspace: React.FC<MyReceiptsWorkspaceProps> = ({
                         {sale.paymentMode}
                       </td>
                       <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                        PKR {sale.netPayable.toFixed(2)}
+                        {formatMoney(sale.netPayable, settings)}
                       </td>
                       <td className="px-5 py-3 text-right">
                         <div className="inline-flex items-center gap-1.5">
@@ -205,7 +203,7 @@ export const MyReceiptsWorkspace: React.FC<MyReceiptsWorkspaceProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => downloadA5InvoicePdf(sale)}
+                            onClick={() => downloadA5InvoicePdf(sale, settings)}
                             title="Download A5 PDF"
                             aria-label={`Download A5 PDF for ${sale.invoiceNumber}`}
                             className="rounded-md border border-slate-300 bg-white p-1.5 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"

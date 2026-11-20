@@ -6,6 +6,7 @@ import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
 import '../services/pdf_invoice_service.dart';
 import '../services/printer_service.dart';
+import '../utils/currency_formatter.dart';
 
 /// Point of Sale & Real-time Cart Management Screen for Clinix Community Pharmacy.
 /// Strictly tuned for Mobile (< 600: 2-tab Catalog / Cart + Sticky Checkout Bar)
@@ -64,16 +65,18 @@ class _PosScreenState extends State<PosScreen>
   bool _isLoading = true;
   bool _isCheckingOut = false;
 
-  final _currency = NumberFormat('#,##0.00');
+  String _fmt(double amount) =>
+      CurrencyFormatter.format(amount, widget.settings);
 
-  String get _cur => widget.settings.currencyLabel.trim().isEmpty
-      ? 'PKR'
-      : widget.settings.currencyLabel.trim();
+  String get _curUnit => CurrencyFormatter.unitLabel(widget.settings);
 
   UserRole get _effectiveRole =>
       widget.currentUserRole ?? widget.settings.activeUserRole;
 
-  bool get _canViewCostAndProfit => _effectiveRole.canViewProfitAndCost;
+  bool get _isManagerOrAdmin => _effectiveRole.canViewProfitAndCost;
+
+  bool get _canViewCostAndProfit =>
+      _isManagerOrAdmin || widget.settings.showProfitToStaff;
 
   @override
   void initState() {
@@ -84,6 +87,17 @@ class _PosScreenState extends State<PosScreen>
     });
     _loadData();
     if (widget.settings.preferUsbScannerFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _searchFocusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant PosScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.settings.preferUsbScannerFocus &&
+        widget.settings.preferUsbScannerFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _searchFocusNode.requestFocus();
       });
@@ -244,7 +258,7 @@ class _PosScreenState extends State<PosScreen>
     }
 
     final effectiveMode =
-        (!_canViewCostAndProfit && _paymentMode.isCreditKhata)
+        (!_isManagerOrAdmin && _paymentMode.isCreditKhata)
             ? PaymentMode.cash
             : _paymentMode;
 
@@ -270,7 +284,7 @@ class _PosScreenState extends State<PosScreen>
         cartLines: List<CartLine>.from(_cart),
         billDiscount: _effectiveBillDiscount,
         paymentMode: effectiveMode,
-        party: _canViewCostAndProfit ? _selectedParty : null,
+        party: _isManagerOrAdmin ? _selectedParty : null,
         transactionReference: effectiveMode.requiresReference
             ? _transactionRefController.text
             : null,
@@ -346,21 +360,21 @@ class _PosScreenState extends State<PosScreen>
             if (sale.transactionReference != null &&
                 sale.transactionReference!.isNotEmpty)
               Text('Reference: ${sale.transactionReference}'),
-            Text('Subtotal: $_cur ${_currency.format(sale.subtotal)}'),
+            Text('Subtotal: ${_fmt(sale.subtotal)}'),
             if (sale.discountAmount > 0)
               Text(
-                'Discount: -$_cur ${_currency.format(sale.discountAmount)}',
+                'Discount: -${_fmt(sale.discountAmount)}',
                 style: TextStyle(color: Colors.amber[800]),
               ),
             const SizedBox(height: 6),
             Text(
-              'Net Payable: $_cur ${_currency.format(sale.netPayable)}',
+              'Net Payable: ${_fmt(sale.netPayable)}',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             if (sale.cashReceived != null) ...[
-              Text('Cash Received: $_cur ${_currency.format(sale.cashReceived!)}'),
+              Text('Cash Received: ${_fmt(sale.cashReceived!)}'),
               Text(
-                'Balance / Change: $_cur ${_currency.format(sale.changeReturned ?? (sale.cashReceived! - sale.netPayable))}',
+                'Balance / Change: ${_fmt(sale.changeReturned ?? (sale.cashReceived! - sale.netPayable))}',
               ),
             ],
           ],
@@ -617,7 +631,7 @@ class _PosScreenState extends State<PosScreen>
         final isLowOrOut =
             item.isLowStockWithThreshold(widget.settings.lowStockThreshold);
         final isNearExp =
-            item.isExpiringWithinDays(widget.settings.nearExpiryDays);
+            item.isExpiringWithinDays(widget.settings.expiryAlertDays);
         return Card(
           elevation: 0,
           margin: EdgeInsets.zero,
@@ -666,7 +680,7 @@ class _PosScreenState extends State<PosScreen>
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        '$_cur ${_currency.format(item.sellingPrice)}',
+                        _fmt(item.sellingPrice),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Color(0xFF0D7A5F),
@@ -702,7 +716,7 @@ class _PosScreenState extends State<PosScreen>
 
   Widget _buildCartScrollableBody() {
     final availableModes = PaymentMode.values
-        .where((m) => _canViewCostAndProfit || !m.isCreditKhata)
+        .where((m) => _isManagerOrAdmin || !m.isCreditKhata)
         .toList();
     final cashIn = _parsedCashReceived;
     final change = cashIn != null ? cashIn - _netPayable : 0.0;
@@ -710,7 +724,7 @@ class _PosScreenState extends State<PosScreen>
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        if (_canViewCostAndProfit)
+        if (_isManagerOrAdmin)
           DropdownButtonFormField<Party>(
             value: _selectedParty,
             decoration: const InputDecoration(
@@ -722,7 +736,7 @@ class _PosScreenState extends State<PosScreen>
                 .map((p) => DropdownMenuItem(
                       value: p,
                       child: Text(
-                        '${p.name} (Bal: ${p.balance.toStringAsFixed(0)})',
+                        '${p.name} (Bal: ${_fmt(p.balance)})',
                         overflow: TextOverflow.ellipsis,
                       ),
                     ))
@@ -730,9 +744,9 @@ class _PosScreenState extends State<PosScreen>
             onChanged: (val) => setState(() => _selectedParty = val),
           )
         else
-          Chip(
-            avatar: const Icon(Icons.person, size: 16),
-            label: const Text('Walk-in Customer'),
+          const Chip(
+            avatar: Icon(Icons.person, size: 16),
+            label: Text('Walk-in Customer'),
           ),
         const SizedBox(height: 10),
         if (_cart.isEmpty)
@@ -830,7 +844,7 @@ class _PosScreenState extends State<PosScreen>
                         ),
                         Flexible(
                           child: Text(
-                            '$_cur ${_currency.format(line.lineTotal)}',
+                            _fmt(line.lineTotal),
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
@@ -847,7 +861,7 @@ class _PosScreenState extends State<PosScreen>
           controller: _billDiscountController,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: InputDecoration(
-            labelText: 'Bill Discount ($_cur)',
+            labelText: 'Bill Discount ($_curUnit)',
             border: const OutlineInputBorder(),
             isDense: true,
           ),
@@ -895,7 +909,7 @@ class _PosScreenState extends State<PosScreen>
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
-                    labelText: 'Cash Received ($_cur)',
+                    labelText: 'Cash Received ($_curUnit)',
                     border: const OutlineInputBorder(),
                     isDense: true,
                   ),
@@ -909,7 +923,7 @@ class _PosScreenState extends State<PosScreen>
                   const Text('Balance / Change',
                       style: TextStyle(fontSize: 11)),
                   Text(
-                    '$_cur ${_currency.format(change)}',
+                    _fmt(change),
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: change >= 0
@@ -923,14 +937,13 @@ class _PosScreenState extends State<PosScreen>
           ),
         ],
         const SizedBox(height: 12),
-        _metricRow('Subtotal', '$_cur ${_currency.format(_subtotal)}'),
-        _metricRow(
-            'Total Discounts', '-$_cur ${_currency.format(_totalDiscount)}'),
+        _metricRow('Subtotal', _fmt(_subtotal)),
+        _metricRow('Total Discounts', '-${_fmt(_totalDiscount)}'),
         if (_canViewCostAndProfit) ...[
-          _metricRow('Total Cost', '$_cur ${_currency.format(_totalCost)}'),
+          _metricRow('Total Cost', _fmt(_totalCost)),
           _metricRow(
             'Net Profit',
-            '$_cur ${_currency.format(_netProfit)}',
+            _fmt(_netProfit),
             valueColor:
                 _netProfit >= 0 ? Colors.green.shade700 : Colors.red.shade700,
           ),
@@ -938,7 +951,7 @@ class _PosScreenState extends State<PosScreen>
         const Divider(),
         _metricRow(
           'Net Payable',
-          '$_cur ${_currency.format(_netPayable)}',
+          _fmt(_netPayable),
           isBold: true,
         ),
       ],
@@ -969,7 +982,7 @@ class _PosScreenState extends State<PosScreen>
               icon: const Icon(Icons.print),
               label: Text(_isCheckingOut
                   ? 'Processing...'
-                  : 'Complete & Print · $_cur ${_currency.format(_netPayable)}'),
+                  : 'Complete & Print · ${_fmt(_netPayable)}'),
             ),
           ),
         ),
@@ -997,7 +1010,7 @@ class _PosScreenState extends State<PosScreen>
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
               ),
               Text(
-                'Net Payable: $_cur ${_currency.format(_netPayable)}',
+                'Net Payable: ${_fmt(_netPayable)}',
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -1023,8 +1036,9 @@ class _PosScreenState extends State<PosScreen>
 
   Future<void> _promptItemDiscount(int index) async {
     final line = _cart[index];
-    final controller =
-        TextEditingController(text: line.clampedDiscount.toStringAsFixed(0));
+    final controller = TextEditingController(
+      text: line.clampedDiscount.toStringAsFixed(widget.settings.decimalDigits),
+    );
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1033,8 +1047,7 @@ class _PosScreenState extends State<PosScreen>
           controller: controller,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: InputDecoration(
-            labelText:
-                'Flat Discount (Max $_cur ${line.grossTotal.toStringAsFixed(0)})',
+            labelText: 'Flat Discount (Max ${_fmt(line.grossTotal)})',
           ),
         ),
         actions: [

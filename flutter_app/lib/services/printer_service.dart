@@ -1,11 +1,11 @@
 import 'dart:typed_data';
 
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
-import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
+import '../utils/currency_formatter.dart';
 
 enum ThermalPaperWidth { mm58, mm80 }
 
@@ -94,7 +94,7 @@ class PrinterService {
     }
 
     final width = overrideWidth ??
-        (activeSettings.paperWidthMm == 58
+        (activeSettings.thermalPaperWidth == 58
             ? ThermalPaperWidth.mm58
             : await getSavedPaperWidth());
     final bytes = buildEscPosReceipt(
@@ -182,12 +182,16 @@ class PrinterService {
     PharmacySettings? settings,
   }) {
     final cfg = settings ?? PharmacySettings.defaults();
-    final cur = cfg.currencyLabel.trim().isEmpty ? 'PKR' : cfg.currencyLabel.trim();
     final int cols = width.columnsPerLine;
     final List<int> buffer = [];
-    final currency = NumberFormat('#,##0.00');
-    final parsedDate = DateTime.tryParse(sale.createdAt) ?? DateTime.now();
-    final dateText = DateFormat('dd-MMM-yyyy hh:mm a').format(parsedDate);
+    final dateText =
+        CurrencyFormatter.formatDate(sale.createdAt, cfg, includeTime: true);
+    String fmtMoney(double val) => CurrencyFormatter.format(
+          val,
+          cfg,
+          asciiOnly: true,
+          grouping: false,
+        );
 
     // ESC @ : Initialize printer
     buffer.addAll([0x1B, 0x40]);
@@ -201,14 +205,17 @@ class PrinterService {
     buffer.addAll(_line(cfg.pharmacyName.toUpperCase()));
     buffer.addAll([0x1D, 0x21, 0x00]); // Normal size
     buffer.addAll([0x1B, 0x45, 0x00]); // Bold OFF
-    if (cfg.branchAddress.trim().isNotEmpty) {
-      buffer.addAll(_line(cfg.branchAddress.trim()));
+    if (cfg.address.trim().isNotEmpty) {
+      buffer.addAll(_line(cfg.address.trim()));
     }
-    if (cfg.phoneNumber.trim().isNotEmpty) {
-      buffer.addAll(_line('Tel: ${cfg.phoneNumber.trim()}'));
+    if (cfg.phone.trim().isNotEmpty) {
+      buffer.addAll(_line('Tel: ${cfg.phone.trim()}'));
     }
     if (cfg.licenseNumber.trim().isNotEmpty) {
       buffer.addAll(_line('Lic: ${cfg.licenseNumber.trim()}'));
+    }
+    if (cfg.showWebsiteOnReceipt && cfg.websiteUrl.trim().isNotEmpty) {
+      buffer.addAll(_line(cfg.websiteUrl.trim()));
     }
     buffer.addAll(_line('=' * cols));
 
@@ -238,17 +245,20 @@ class PrinterService {
     buffer.addAll(_line('-' * cols));
 
     // Itemized breakdown
+    final int dec = cfg.decimalDigits;
     for (final item in items) {
-      final lineTotalStr = currency.format(item.lineTotal);
+      final lineTotalStr = item.lineTotal.toStringAsFixed(dec);
       if (cols >= 48) {
         final name = _truncate(item.itemName, 21);
-        final discStr =
-            item.itemDiscount > 0 ? '-${item.itemDiscount.toStringAsFixed(0)}' : '0';
+        final discStr = item.itemDiscount > 0
+            ? '-${item.itemDiscount.toStringAsFixed(dec)}'
+            : '0';
         buffer.addAll(_line(
           '${_padRight(name, 22)}${_padLeft('${item.quantity}', 5)}${_padLeft(discStr, 9)}${_padLeft(lineTotalStr, 12)}',
         ));
         if (item.batchNumber.isNotEmpty) {
-          buffer.addAll(_line('  Batch: ${item.batchNumber} @ ${currency.format(item.unitPrice)}'));
+          buffer.addAll(_line(
+              '  Batch: ${item.batchNumber} @ ${fmtMoney(item.unitPrice)}'));
         }
       } else {
         final name = _truncate(item.itemName, 14);
@@ -256,7 +266,8 @@ class PrinterService {
           '${_padRight(name, 15)}${_padLeft('${item.quantity}', 4)}${_padLeft(lineTotalStr, 13)}',
         ));
         if (item.itemDiscount > 0) {
-          buffer.addAll(_line('  Rate:${item.unitPrice.toStringAsFixed(0)} Disc:-${item.itemDiscount.toStringAsFixed(0)}'));
+          buffer.addAll(_line(
+              '  Rate:${item.unitPrice.toStringAsFixed(dec)} Disc:-${item.itemDiscount.toStringAsFixed(dec)}'));
         }
       }
     }
@@ -264,28 +275,29 @@ class PrinterService {
     buffer.addAll(_line('-' * cols));
 
     // Totals & Discounts
-    buffer.addAll(_line(_twoCol('Subtotal:', '$cur ${currency.format(sale.subtotal)}', cols)));
+    buffer.addAll(_line(_twoCol('Subtotal:', fmtMoney(sale.subtotal), cols)));
     if (sale.discountAmount > 0) {
       buffer.addAll(_line(
-        _twoCol('Total Discount:', '-$cur ${currency.format(sale.discountAmount)}', cols),
+        _twoCol('Total Discount:', '-${fmtMoney(sale.discountAmount)}', cols),
       ));
     }
 
     buffer.addAll([0x1B, 0x45, 0x01]); // Bold ON
     buffer.addAll([0x1D, 0x21, 0x01]); // Double height
     buffer.addAll(_line(
-      _twoCol('NET PAYABLE:', '$cur ${currency.format(sale.netPayable)}', cols),
+      _twoCol('NET PAYABLE:', fmtMoney(sale.netPayable), cols),
     ));
     buffer.addAll([0x1D, 0x21, 0x00]); // Normal height
     buffer.addAll([0x1B, 0x45, 0x00]); // Bold OFF
 
     if (sale.cashReceived != null) {
       buffer.addAll(_line(
-        _twoCol('Cash Received:', '$cur ${currency.format(sale.cashReceived!)}', cols),
+        _twoCol('Cash Received:', fmtMoney(sale.cashReceived!), cols),
       ));
-      final change = sale.changeReturned ?? (sale.cashReceived! - sale.netPayable);
+      final change =
+          sale.changeReturned ?? (sale.cashReceived! - sale.netPayable);
       buffer.addAll(_line(
-        _twoCol('Balance / Change:', '$cur ${currency.format(change)}', cols),
+        _twoCol('Balance / Change:', fmtMoney(change), cols),
       ));
     }
 
@@ -293,8 +305,8 @@ class PrinterService {
 
     // Footer
     buffer.addAll([0x1B, 0x61, 0x01]); // Center align
-    if (cfg.receiptFooterNote.trim().isNotEmpty) {
-      for (final line in _wrapText(cfg.receiptFooterNote.trim(), cols)) {
+    if (cfg.receiptFooter.trim().isNotEmpty) {
+      for (final line in _wrapText(cfg.receiptFooter.trim(), cols)) {
         buffer.addAll(_line(line));
       }
     }

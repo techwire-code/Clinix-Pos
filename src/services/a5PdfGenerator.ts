@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { PharmacySettings, SaleRecord } from '../types/pharmacy';
+import { formatDateBySettings, formatMoney } from './localDb';
 
 export function buildA5InvoicePdf(
   sale: SaleRecord,
@@ -7,14 +8,21 @@ export function buildA5InvoicePdf(
 ): jsPDF {
   const pharmacyName =
     settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
-  const branchAddress =
-    settings?.branchAddress?.trim() || '17 KM Ferozepur Road, Lahore';
-  const phoneNumber = settings?.phoneNumber?.trim() || '';
+  const address =
+    settings?.address?.trim() || '17 KM Ferozepur Road, Lahore';
+  const phone = settings?.phone?.trim() || '';
   const licenseNumber = settings?.licenseNumber?.trim() || '';
+  const websiteUrl =
+    settings?.showWebsiteOnReceipt && settings?.websiteUrl?.trim()
+      ? settings.websiteUrl.trim()
+      : '';
   const footerNote =
-    settings?.receiptFooterNote?.trim() ||
+    settings?.receiptFooter?.trim() ||
     'Unopened medicines with original invoice may be exchanged within 7 days.';
-  const cur = (settings?.currencyLabel?.trim() || 'PKR').toUpperCase();
+  const digits = settings?.decimalDigits ?? 2;
+
+  const fmt = (val: number) =>
+    formatMoney(val, settings, { asciiOnly: true });
 
   // A5 dimensions in mm: 148 x 210
   const doc = new jsPDF({
@@ -42,15 +50,16 @@ export function buildA5InvoicePdf(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(51, 65, 85);
-  doc.text(branchAddress, left, y);
+  doc.text(address, left, y);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(13, 122, 95);
   doc.text(sale.invoiceNumber, right, y, { align: 'right' });
 
   const contactBits = [
-    phoneNumber ? `Tel: ${phoneNumber}` : '',
+    phone ? `Tel: ${phone}` : '',
     licenseNumber ? `Lic: ${licenseNumber}` : '',
+    websiteUrl || '',
   ].filter(Boolean);
 
   if (contactBits.length > 0) {
@@ -82,12 +91,8 @@ export function buildA5InvoicePdf(
   doc.setTextColor(15, 23, 42);
   doc.text(sale.partyName, left + 3, y + 10);
 
-  const formattedDate = new Date(sale.createdAt).toLocaleString('en-PK', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+  const formattedDate = formatDateBySettings(sale.createdAt, settings, {
+    includeTime: true,
   });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
@@ -123,14 +128,16 @@ export function buildA5InvoicePdf(
     doc.setFontSize(8);
     doc.text(line.itemName.slice(0, 34), left + 2, y + 4.5);
     doc.text(String(line.quantity), 82, y + 4.5, { align: 'right' });
-    doc.text(line.unitPrice.toFixed(2), 100, y + 4.5, { align: 'right' });
+    doc.text(line.unitPrice.toFixed(digits), 100, y + 4.5, { align: 'right' });
     doc.text(
       line.itemDiscount > 0 ? `-${line.itemDiscount.toFixed(0)}` : '0',
       117,
       y + 4.5,
       { align: 'right' },
     );
-    doc.text(line.lineTotal.toFixed(2), right - 2, y + 4.5, { align: 'right' });
+    doc.text(line.lineTotal.toFixed(digits), right - 2, y + 4.5, {
+      align: 'right',
+    });
 
     if (line.batchNumber) {
       y += 4;
@@ -148,20 +155,20 @@ export function buildA5InvoicePdf(
 
   // Totals Box
   y += 8;
-  const boxX = 78;
+  const boxX = 76;
   const hasCashDetails = sale.cashReceived !== undefined;
   doc.setDrawColor(226, 232, 240);
   doc.rect(boxX, y, right - boxX, hasCashDetails ? 35 : 24, 'S');
 
   doc.setFontSize(8);
   doc.text('Subtotal:', boxX + 3, y + 5.5);
-  doc.text(`${cur} ${sale.subtotal.toFixed(2)}`, right - 3, y + 5.5, {
+  doc.text(fmt(sale.subtotal), right - 3, y + 5.5, {
     align: 'right',
   });
 
   doc.text('Total Discount:', boxX + 3, y + 11);
   doc.setTextColor(180, 83, 9);
-  doc.text(`-${cur} ${sale.discountAmount.toFixed(2)}`, right - 3, y + 11, {
+  doc.text(`-${fmt(sale.discountAmount)}`, right - 3, y + 11, {
     align: 'right',
   });
 
@@ -172,7 +179,7 @@ export function buildA5InvoicePdf(
   doc.setFontSize(9.5);
   doc.setTextColor(13, 122, 95);
   doc.text('Net Payable:', boxX + 3, y + 20.5);
-  doc.text(`${cur} ${sale.netPayable.toFixed(2)}`, right - 3, y + 20.5, {
+  doc.text(fmt(sale.netPayable), right - 3, y + 20.5, {
     align: 'right',
   });
 
@@ -182,13 +189,13 @@ export function buildA5InvoicePdf(
     doc.setFontSize(8);
     doc.setTextColor(51, 65, 85);
     doc.text('Cash Received:', boxX + 3, y + 26.5);
-    doc.text(`${cur} ${sale.cashReceived.toFixed(2)}`, right - 3, y + 26.5, {
+    doc.text(fmt(sale.cashReceived), right - 3, y + 26.5, {
       align: 'right',
     });
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(15, 23, 42);
     doc.text('Balance / Change:', boxX + 3, y + 32);
-    doc.text(`${cur} ${bal.toFixed(2)}`, right - 3, y + 32, {
+    doc.text(fmt(bal), right - 3, y + 32, {
       align: 'right',
     });
   }
@@ -200,7 +207,7 @@ export function buildA5InvoicePdf(
   doc.text(footerNote, 74, 196, { align: 'center', maxWidth: 124 });
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(`${pharmacyName} · ${branchAddress}`, 74, 202, {
+  doc.text(`${pharmacyName} · ${address}`, 74, 202, {
     align: 'center',
   });
 
@@ -221,18 +228,23 @@ export async function shareInvoiceSummary(
 ): Promise<'shared' | 'copied'> {
   const pharmacyName =
     settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
-  const branchAddress =
-    settings?.branchAddress?.trim() || '17 KM Ferozepur Road, Lahore';
-  const cur = (settings?.currencyLabel?.trim() || 'PKR').toUpperCase();
+  const address =
+    settings?.address?.trim() || '17 KM Ferozepur Road, Lahore';
+  const websiteLine =
+    settings?.showWebsiteOnReceipt && settings?.websiteUrl?.trim()
+      ? `Website: ${settings.websiteUrl.trim()}`
+      : null;
 
   const summaryText = [
-    `${pharmacyName.toUpperCase()} (${branchAddress})`,
+    `${pharmacyName.toUpperCase()} (${address})`,
+    ...(websiteLine ? [websiteLine] : []),
     `Invoice: ${sale.invoiceNumber}`,
+    `Date: ${formatDateBySettings(sale.createdAt, settings, { includeTime: true })}`,
     `Party: ${sale.partyName}`,
     `Payment Mode: ${sale.paymentMode}${sale.transactionReference ? ` (Ref: ${sale.transactionReference})` : ''}`,
-    `Subtotal: ${cur} ${sale.subtotal.toFixed(2)}`,
-    `Discount: -${cur} ${sale.discountAmount.toFixed(2)}`,
-    `Net Payable: ${cur} ${sale.netPayable.toFixed(2)}`,
+    `Subtotal: ${formatMoney(sale.subtotal, settings)}`,
+    `Discount: -${formatMoney(sale.discountAmount, settings)}`,
+    `Net Payable: ${formatMoney(sale.netPayable, settings)}`,
   ].join('\n');
 
   const doc = buildA5InvoicePdf(sale, settings);

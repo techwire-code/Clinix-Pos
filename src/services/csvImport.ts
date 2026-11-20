@@ -89,7 +89,7 @@ export function parseCsvText(rawText: string): string[][] {
 function normalizeHeaderKey(header: string): string {
   return header
     .toLowerCase()
-    .replace(/\(pkr\)/g, '')
+    .replace(/\([a-z]{2,5}\)/g, '')
     .replace(/[^a-z0-9]+/g, '')
     .trim();
 }
@@ -141,7 +141,7 @@ function normalizeExpiryDate(raw: string): string {
 
 function parseNumericCell(raw: string): number | null {
   const cleaned = raw
-    .replace(/pkr|rs\.?|,/gi, '')
+    .replace(/pkr|usd|eur|gbp|aed|sar|inr|cad|aud|rs\.?|[$€£₹﷼,]/gi, '')
     .trim();
   if (!cleaned) return null;
   const num = Number(cleaned);

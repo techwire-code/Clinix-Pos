@@ -7,6 +7,11 @@ import {
   X,
 } from 'lucide-react';
 import { PharmacySettings, SaleRecord, ThermalWidth } from '../types/pharmacy';
+import {
+  formatDateBySettings,
+  formatMoney,
+  toThermalWidth,
+} from '../services/localDb';
 import { generateEscPosReceipt } from '../services/escPosGenerator';
 import {
   downloadA5InvoicePdf,
@@ -29,17 +34,23 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   onClose,
 }) => {
   const [paperWidth, setPaperWidth] = useState<ThermalWidth>(
-    settings?.paperWidth ?? defaultWidth,
+    settings ? toThermalWidth(settings.thermalPaperWidth) : defaultWidth,
   );
   const [showHex, setShowHex] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const autoPrintedSaleIdRef = useRef<number | null>(null);
 
-  const cur = (settings?.currencyLabel?.trim() || 'PKR').toUpperCase();
   const pharmacyName =
     settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
-  const branchAddress =
-    settings?.branchAddress?.trim() || '17 KM Ferozepur Road, Lahore';
+  const address =
+    settings?.address?.trim() || '17 KM Ferozepur Road, Lahore';
+  const phone = settings?.phone?.trim() || '';
+  const licenseNumber = settings?.licenseNumber?.trim() || '';
+  const websiteUrl =
+    settings?.showWebsiteOnReceipt && settings?.websiteUrl?.trim()
+      ? settings.websiteUrl.trim()
+      : '';
+  const digits = settings?.decimalDigits ?? 2;
 
   useEffect(() => {
     if (autoPrint && autoPrintedSaleIdRef.current !== sale.id) {
@@ -98,9 +109,13 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
               Invoice {sale.invoiceNumber}
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {sale.partyName} · {sale.paymentMode} · Net Payable {cur}{' '}
+              {sale.partyName} · {sale.paymentMode} ·{' '}
+              {formatDateBySettings(sale.createdAt, settings, {
+                includeTime: true,
+              })}{' '}
+              · Net Payable{' '}
               <span className="font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                {sale.netPayable.toFixed(2)}
+                {formatMoney(sale.netPayable, settings)}
               </span>
             </p>
           </div>
@@ -181,15 +196,14 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                   {pharmacyName}
                 </p>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  {branchAddress}
+                  {address}
                 </p>
-                {(settings?.phoneNumber || settings?.licenseNumber) && (
+                {(phone || licenseNumber || websiteUrl) && (
                   <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                     {[
-                      settings.phoneNumber ? `Tel: ${settings.phoneNumber}` : '',
-                      settings.licenseNumber
-                        ? `Lic: ${settings.licenseNumber}`
-                        : '',
+                      phone ? `Tel: ${phone}` : '',
+                      licenseNumber ? `Lic: ${licenseNumber}` : '',
+                      websiteUrl,
                     ]
                       .filter(Boolean)
                       .join(' · ')}
@@ -221,7 +235,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                           : '0'}
                       </td>
                       <td className="py-2 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                        {line.lineTotal.toFixed(2)}
+                        {line.lineTotal.toFixed(digits)}
                       </td>
                     </tr>
                   ))}
@@ -232,19 +246,19 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
                   <span>Subtotal</span>
                   <span className="font-mono-tabular">
-                    {cur} {sale.subtotal.toFixed(2)}
+                    {formatMoney(sale.subtotal, settings)}
                   </span>
                 </div>
                 <div className="flex justify-between text-amber-700 dark:text-amber-400">
                   <span>Total Discounts</span>
                   <span className="font-mono-tabular">
-                    -{cur} {sale.discountAmount.toFixed(2)}
+                    -{formatMoney(sale.discountAmount, settings)}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm font-bold text-slate-900 dark:text-slate-100">
                   <span>Net Payable</span>
                   <span className="font-mono-tabular text-[#0D7A5F] dark:text-emerald-400">
-                    {cur} {sale.netPayable.toFixed(2)}
+                    {formatMoney(sale.netPayable, settings)}
                   </span>
                 </div>
                 {sale.cashReceived !== undefined && (
@@ -252,17 +266,17 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                     <div className="flex justify-between text-slate-600 dark:text-slate-400">
                       <span>Cash Received</span>
                       <span className="font-mono-tabular">
-                        {cur} {sale.cashReceived.toFixed(2)}
+                        {formatMoney(sale.cashReceived, settings)}
                       </span>
                     </div>
                     <div className="flex justify-between font-semibold text-slate-900 dark:text-slate-100">
                       <span>Balance / Change</span>
                       <span className="font-mono-tabular text-[#0D7A5F] dark:text-emerald-400">
-                        {cur}{' '}
-                        {(
+                        {formatMoney(
                           sale.changeReturned ??
-                          sale.cashReceived - sale.netPayable
-                        ).toFixed(2)}
+                            sale.cashReceived - sale.netPayable,
+                          settings,
+                        )}
                       </span>
                     </div>
                   </>
@@ -281,9 +295,9 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                     </span>
                   </div>
                 )}
-                {settings?.receiptFooterNote && (
+                {settings?.receiptFooter && (
                   <p className="border-t border-slate-100 pt-2 text-center text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                    {settings.receiptFooterNote}
+                    {settings.receiptFooter}
                   </p>
                 )}
               </div>
