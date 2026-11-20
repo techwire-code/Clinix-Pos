@@ -92,6 +92,7 @@ extension PaymentModeX on PaymentMode {
 class PharmacyItem {
   final int? id;
   final String name;
+  final String genericName;
   final String barcode;
   final String category;
   final int unitsPerBox;
@@ -107,6 +108,7 @@ class PharmacyItem {
   const PharmacyItem({
     this.id,
     required this.name,
+    this.genericName = '',
     required this.barcode,
     required this.category,
     this.unitsPerBox = 1,
@@ -145,6 +147,7 @@ class PharmacyItem {
   PharmacyItem copyWith({
     int? id,
     String? name,
+    String? genericName,
     String? barcode,
     String? category,
     int? unitsPerBox,
@@ -163,6 +166,7 @@ class PharmacyItem {
     return PharmacyItem(
       id: id ?? this.id,
       name: name ?? this.name,
+      genericName: genericName ?? this.genericName,
       barcode: barcode ?? this.barcode,
       category: category ?? this.category,
       unitsPerBox: nextUnits,
@@ -181,6 +185,7 @@ class PharmacyItem {
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
         'name': name,
+        'generic_name': genericName,
         'barcode': barcode,
         'category': category,
         'units_per_box': unitsPerBox,
@@ -207,6 +212,7 @@ class PharmacyItem {
     return PharmacyItem(
       id: map['id'] as int?,
       name: map['name'] as String,
+      genericName: (map['generic_name'] ?? '') as String,
       barcode: (map['barcode'] ?? '') as String,
       category: (map['category'] ?? 'General') as String,
       unitsPerBox: safeUnits,

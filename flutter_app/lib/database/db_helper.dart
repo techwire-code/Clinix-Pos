@@ -18,7 +18,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
   static const String _dbName = 'clinix_pharmacy_pos.db';
-  static const int _dbVersion = 3;
+  static const int _dbVersion = 4;
   static const String _settingsPrefsKey = 'clinix_app_settings_v2';
 
   Database? _database;
@@ -160,6 +160,35 @@ class DatabaseHelper {
         WHERE id = 1
       ''');
     }
+    if (oldVersion < 4) {
+      final itemCols = await db.rawQuery('PRAGMA table_info(items)');
+      final colNames =
+          itemCols.map((c) => c['name']?.toString()).whereType<String>().toSet();
+      if (!colNames.contains('generic_name')) {
+        await db.execute(
+          "ALTER TABLE items ADD COLUMN generic_name TEXT NOT NULL DEFAULT ''",
+        );
+      }
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_items_generic ON items(generic_name)',
+      );
+      const legacySeedGenerics = <String, String>{
+        '896400100101': 'Paracetamol',
+        '896400100204': 'Co-Amoxiclav (Amoxicillin + Clavulanic Acid)',
+        '896400100309': 'Omeprazole',
+        '896400100411': 'Metformin',
+        '896400100518': 'Ibuprofen',
+        '896400100622': 'Calcium + Vitamin C',
+      };
+      for (final entry in legacySeedGenerics.entries) {
+        await db.update(
+          'items',
+          {'generic_name': entry.value},
+          where: "barcode = ? AND TRIM(generic_name) = ''",
+          whereArgs: [entry.key],
+        );
+      }
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -168,6 +197,7 @@ class DatabaseHelper {
       CREATE TABLE items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
+        generic_name TEXT NOT NULL DEFAULT '',
         barcode TEXT NOT NULL DEFAULT '',
         category TEXT NOT NULL DEFAULT 'General',
         units_per_box INTEGER NOT NULL DEFAULT 1,
@@ -183,6 +213,7 @@ class DatabaseHelper {
     ''');
     await db.execute('CREATE INDEX idx_items_barcode ON items(barcode)');
     await db.execute('CREATE INDEX idx_items_name ON items(name)');
+    await db.execute('CREATE INDEX idx_items_generic ON items(generic_name)');
 
     // 2. Parties Table (Customers & Suppliers)
     await db.execute('''
@@ -281,6 +312,7 @@ class DatabaseHelper {
     final seedItems = [
       const PharmacyItem(
         name: 'Panadol 500mg Tablets',
+        genericName: 'Paracetamol',
         barcode: '896400100101',
         category: 'Analgesics',
         unitsPerBox: 100,
@@ -295,6 +327,7 @@ class DatabaseHelper {
       ),
       const PharmacyItem(
         name: 'Augmentin 625mg Tablets',
+        genericName: 'Co-Amoxiclav (Amoxicillin + Clavulanic Acid)',
         barcode: '896400100204',
         category: 'Antibiotics',
         unitsPerBox: 6,
@@ -309,6 +342,7 @@ class DatabaseHelper {
       ),
       const PharmacyItem(
         name: 'Risek 20mg Capsules',
+        genericName: 'Omeprazole',
         barcode: '896400100309',
         category: 'Gastro',
         unitsPerBox: 14,
@@ -323,6 +357,7 @@ class DatabaseHelper {
       ),
       const PharmacyItem(
         name: 'Glucophage 500mg Tablets',
+        genericName: 'Metformin',
         barcode: '896400100411',
         category: 'Diabetes Care',
         unitsPerBox: 50,
@@ -337,6 +372,7 @@ class DatabaseHelper {
       ),
       const PharmacyItem(
         name: 'Brufen 400mg Tablets',
+        genericName: 'Ibuprofen',
         barcode: '896400100518',
         category: 'Analgesics',
         unitsPerBox: 20,
@@ -351,6 +387,7 @@ class DatabaseHelper {
       ),
       const PharmacyItem(
         name: 'CaC-1000 Plus Orange',
+        genericName: 'Calcium + Vitamin C',
         barcode: '896400100622',
         category: 'Supplements',
         unitsPerBox: 10,
@@ -433,8 +470,15 @@ class DatabaseHelper {
     } else {
       rows = await db.query(
         'items',
-        where: 'name LIKE ? OR barcode LIKE ? OR category LIKE ? OR batch_number LIKE ?',
-        whereArgs: ['%$clean%', '%$clean%', '%$clean%', '%$clean%'],
+        where:
+            'name LIKE ? OR generic_name LIKE ? OR barcode LIKE ? OR category LIKE ? OR batch_number LIKE ?',
+        whereArgs: [
+          '%$clean%',
+          '%$clean%',
+          '%$clean%',
+          '%$clean%',
+          '%$clean%',
+        ],
         orderBy: 'name ASC',
       );
     }

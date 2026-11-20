@@ -238,6 +238,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
       const matchesQuery =
         !q ||
         item.name.toLowerCase().includes(q) ||
+        (item.genericName ?? '').toLowerCase().includes(q) ||
         item.barcode.toLowerCase().includes(q) ||
         item.category.toLowerCase().includes(q) ||
         item.batchNumber.toLowerCase().includes(q);
@@ -628,11 +629,36 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
                     : 'cursor-pointer border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70 active:scale-[0.995] dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800/70'
               }`}
             >
-              {/* Left: Medicine Name (max 2 lines) & Metadata */}
+              {/* Left: Medicine Name (max 2 lines), Generic Formula & Metadata */}
               <div className="min-w-0 flex-1">
                 <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-slate-900 dark:text-slate-100">
                   {item.name}
                 </h3>
+                {item.genericName && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const gen = item.genericName?.trim() ?? '';
+                      if (!gen) return;
+                      if (searchQuery.trim().toLowerCase() === gen.toLowerCase()) {
+                        setSearchQuery('');
+                      } else {
+                        setSelectedCategory('All');
+                        setSearchQuery(gen);
+                      }
+                    }}
+                    title="Tap to filter all brands matching this generic"
+                    className={`mt-1 inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-left text-[11px] font-medium transition-colors ${
+                      searchQuery.trim().toLowerCase() ===
+                      item.genericName.trim().toLowerCase()
+                        ? 'border-[#0D7A5F] bg-[#0D7A5F] text-white dark:border-emerald-500 dark:bg-emerald-600'
+                        : 'border-slate-200 bg-slate-100/80 text-slate-700 hover:border-[#0D7A5F]/50 hover:text-[#0D7A5F] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-emerald-500 dark:hover:text-emerald-300'
+                    }`}
+                  >
+                    <span className="truncate">{item.genericName}</span>
+                  </button>
+                )}
                 <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                   <span>{item.category}</span>
                   <span className="mx-1.5 text-slate-300 dark:text-slate-600">
@@ -1117,7 +1143,7 @@ export const PosWorkspace: React.FC<PosWorkspaceProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleSearchKeyDown}
-              placeholder="Search name, category, batch or scan barcode..."
+              placeholder="Search medicine, generic, batch or barcode..."
               className="min-h-[42px] w-full rounded-xl border border-slate-300 bg-slate-50 py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#0D7A5F] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0D7A5F]/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-emerald-500 dark:focus:bg-slate-800 sm:text-sm"
             />
             {searchQuery && (

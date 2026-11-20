@@ -47,6 +47,7 @@ const THRESHOLD_STORAGE_KEY = 'clinix_low_stock_threshold_v1';
 
 interface MedicineFormState {
   name: string;
+  genericName: string;
   barcode: string;
   category: string;
   unitsPerBox: string;
@@ -58,8 +59,21 @@ interface MedicineFormState {
   expiryDate: string;
 }
 
+const COMMON_GENERICS = [
+  'Paracetamol',
+  'Omeprazole',
+  'Cetirizine',
+  'Amoxicillin',
+  'Metformin',
+  'Bisoprolol',
+  'Ibuprofen',
+  'Metronidazole',
+  'Insulin Glargine',
+];
+
 const EMPTY_FORM: MedicineFormState = {
   name: '',
+  genericName: '',
   barcode: '',
   category: 'Analgesics',
   unitsPerBox: '10',
@@ -173,6 +187,8 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
           entry.daysLeft <= 30 &&
           (!q ||
             entry.item.name.toLowerCase().includes(q) ||
+            (entry.item.genericName ?? '').toLowerCase().includes(q) ||
+            entry.item.category.toLowerCase().includes(q) ||
             entry.item.barcode.toLowerCase().includes(q) ||
             entry.item.batchNumber.toLowerCase().includes(q)),
       )
@@ -204,6 +220,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
         'Expiry Date',
         'Days Remaining',
         'Medicine Name',
+        'Generic Name',
         'Category',
         'Batch Number',
         'Stock Quantity',
@@ -214,6 +231,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
         item.expiryDate,
         daysLeft,
         item.name,
+        item.genericName ?? '',
         item.category,
         item.batchNumber,
         item.stockQuantity,
@@ -229,6 +247,8 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
       const matchesQ =
         !q ||
         item.name.toLowerCase().includes(q) ||
+        (item.genericName ?? '').toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q) ||
         item.barcode.toLowerCase().includes(q) ||
         item.batchNumber.toLowerCase().includes(q);
       if (!matchesQ) return false;
@@ -250,6 +270,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
       [
         'SKU ID',
         'Medicine Name',
+        'Generic Name',
         'Category',
         'Barcode',
         'Batch Number',
@@ -275,6 +296,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
         return [
           item.id,
           item.name,
+          item.genericName ?? '',
           item.category,
           item.barcode,
           item.batchNumber,
@@ -470,6 +492,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
     setEditingId(item.id);
     setForm({
       name: item.name,
+      genericName: item.genericName ?? '',
       barcode: item.barcode,
       category: item.category,
       unitsPerBox: String(item.unitsPerBox || 1),
@@ -557,6 +580,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
     const payload: Omit<PharmacyItem, 'id'> & { id?: number } = {
       ...(editingId ? { id: editingId } : {}),
       name: trimmedName,
+      genericName: form.genericName.trim(),
       barcode: trimmedBarcode,
       category: form.category.trim() || 'General',
       unitsPerBox: safeUnitsPerBox,
@@ -765,7 +789,7 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter by medicine name, barcode, or batch..."
+              placeholder="Filter by medicine, generic, barcode, or batch..."
               className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-400"
             />
           </div>
@@ -963,6 +987,11 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                           <p className="font-semibold text-slate-900 dark:text-slate-100">
                             {item.name}
                           </p>
+                          {item.genericName && (
+                            <p className="text-[11px] font-medium text-[#0D7A5F] dark:text-emerald-400">
+                              Generic: {item.genericName}
+                            </p>
+                          )}
                           <p className="text-slate-500 dark:text-slate-400">
                             {item.category} · Barcode {item.barcode}
                           </p>
@@ -1051,6 +1080,11 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                           <p className="font-semibold text-slate-900 dark:text-slate-100">
                             {item.name}
                           </p>
+                          {item.genericName && (
+                            <p className="text-[11px] font-medium text-[#0D7A5F] dark:text-emerald-400">
+                              Generic: {item.genericName}
+                            </p>
+                          )}
                           <p className="text-slate-500 dark:text-slate-400">
                             {item.category} · Batch {item.batchNumber}
                           </p>
@@ -1187,6 +1221,47 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                     placeholder="e.g. Panadol 500mg Tablets"
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Generic Name / Salt (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={form.genericName}
+                    onChange={(e) =>
+                      setForm({ ...form, genericName: e.target.value })
+                    }
+                    placeholder="e.g. Paracetamol, Omeprazole, Co-Amoxiclav..."
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {COMMON_GENERICS.map((generic) => {
+                      const active =
+                        form.genericName.trim().toLowerCase() ===
+                        generic.toLowerCase();
+                      return (
+                        <button
+                          key={generic}
+                          type="button"
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              genericName: active ? '' : generic,
+                            })
+                          }
+                          className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                            active
+                              ? 'border-[#0D7A5F] bg-[#0D7A5F] text-white dark:border-emerald-600 dark:bg-emerald-600'
+                              : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-[#0D7A5F]/50 hover:text-[#0D7A5F] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-emerald-500 dark:hover:text-emerald-400'
+                          }`}
+                        >
+                          {generic}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div>
@@ -1425,9 +1500,9 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                       : 'Choose a .csv file to preview and validate'}
                   </p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Columns: Medicine Name*, Category, Barcode, Batch Number,
-                    Expiry Date, Units Per Box, Unit, Box Cost ({csvCur}), Box
-                    Selling ({csvCur}), Stock Quantity
+                    Columns: Medicine Name*, Generic Name, Category, Barcode,
+                    Batch Number, Expiry Date, Units Per Box, Unit, Box Cost (
+                    {csvCur}), Box Selling ({csvCur}), Stock Quantity
                   </p>
                 </div>
 
@@ -1579,6 +1654,11 @@ export const InventoryWorkspace: React.FC<InventoryWorkspaceProps> = ({
                                   <p className="font-semibold text-slate-900 dark:text-slate-100">
                                     {row.name || '(Missing Name)'}
                                   </p>
+                                  {row.genericName && (
+                                    <p className="text-[11px] font-medium text-[#0D7A5F] dark:text-emerald-400">
+                                      Generic: {row.genericName}
+                                    </p>
+                                  )}
                                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
                                     {row.category}
                                     {row.barcode ? ` · ${row.barcode}` : ''}

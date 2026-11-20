@@ -327,10 +327,24 @@ export function loadItems(): PharmacyItem[] {
         ? Math.max(0, Number(item.boxSellingPrice))
         : Math.round(fallbackSelling * unitsPerBox * 100) / 100;
 
+      const resolvedId = Number.isFinite(Number(item.id)) ? Number(item.id) : idx + 1;
+      const legacySeedGeneric =
+        item.genericName === undefined
+          ? SEED_ITEMS.find(
+              (seed) =>
+                seed.id === resolvedId &&
+                seed.name.toLowerCase() === String(item.name ?? '').toLowerCase(),
+            )?.genericName ?? ''
+          : '';
+
       return {
         ...item,
-        id: Number.isFinite(Number(item.id)) ? Number(item.id) : idx + 1,
+        id: resolvedId,
         name: String(item.name ?? 'Unnamed Medicine'),
+        genericName:
+          item.genericName === undefined
+            ? legacySeedGeneric
+            : String(item.genericName ?? '').trim(),
         barcode: String(item.barcode ?? ''),
         category: String(item.category || 'General'),
         unitsPerBox,
@@ -933,6 +947,10 @@ export function executePurchaseTransaction(params: {
               : current.boxSellingPrice;
         updatedItems[existingIdx] = {
           ...current,
+          genericName:
+            line.genericName !== undefined
+              ? line.genericName.trim() || (current.genericName ?? '')
+              : (current.genericName ?? ''),
           stockQuantity: current.stockQuantity + line.quantity,
           unitsPerBox: safeUnitsPerBox,
           boxCostPrice: safeBoxCost,
@@ -963,6 +981,7 @@ export function executePurchaseTransaction(params: {
       const newItem: PharmacyItem = {
         id: resolvedItemId,
         name: line.itemName.trim(),
+        genericName: (line.genericName ?? '').trim(),
         barcode:
           line.barcode.trim() ||
           `89640010${String(resolvedItemId).padStart(4, '0')}`,

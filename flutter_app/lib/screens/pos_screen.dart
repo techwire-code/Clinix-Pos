@@ -519,7 +519,7 @@ class _PosScreenState extends State<PosScreen>
                     onChanged: (_) => _loadData(),
                     onSubmitted: _handleBarcodeSubmit,
                     decoration: InputDecoration(
-                      hintText: 'Search name, category, batch or scan barcode...',
+                      hintText: 'Search medicine, generic, batch or barcode...',
                       prefixIcon: const Icon(Icons.search, size: 20),
                       suffixIcon: _searchController.text.isNotEmpty
                           ? IconButton(
@@ -659,6 +659,59 @@ class _PosScreenState extends State<PosScreen>
                             fontSize: 14,
                           ),
                         ),
+                        if (item.genericName.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Builder(
+                            builder: (context) {
+                              final isGenericActive =
+                                  _searchController.text.trim().toLowerCase() ==
+                                      item.genericName.trim().toLowerCase();
+                              return InkWell(
+                                borderRadius: BorderRadius.circular(6),
+                                onTap: () {
+                                  if (isGenericActive) {
+                                    _searchController.clear();
+                                  } else {
+                                    _selectedCategory = 'All';
+                                    _searchController.text = item.genericName;
+                                  }
+                                  _loadData();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isGenericActive
+                                        ? const Color(0xFF0D7A5F)
+                                        : const Color(0xFF0D7A5F)
+                                            .withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isGenericActive
+                                          ? const Color(0xFF0D7A5F)
+                                          : const Color(0xFF0D7A5F)
+                                              .withOpacity(0.25),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    item.genericName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: isGenericActive
+                                          ? Colors.white
+                                          : const Color(0xFF0D7A5F),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
                         const SizedBox(height: 4),
                         Text(
                           '${item.category} • ${item.batchNumber} • Exp: ${_formatExpiryMmYy(item.expiryDate)} • Stock: ${item.stockQuantity}',

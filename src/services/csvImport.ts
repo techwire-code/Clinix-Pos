@@ -4,6 +4,7 @@ import { calculateUnitPrice } from './localDb';
 export interface ParsedCsvProductRow {
   rowNumber: number;
   name: string;
+  genericName: string;
   barcode: string;
   category: string;
   unitsPerBox: number;
@@ -150,6 +151,7 @@ function parseNumericCell(raw: string): number | null {
 
 const HEADER_ALIASES: Record<
   | 'name'
+  | 'genericName'
   | 'category'
   | 'barcode'
   | 'batchNumber'
@@ -164,6 +166,7 @@ const HEADER_ALIASES: Record<
   string[]
 > = {
   name: ['medicinename', 'name', 'productname', 'itemname', 'medicine', 'product', 'item'],
+  genericName: ['genericname', 'generic', 'salt', 'formula', 'composition', 'activeingredient'],
   category: ['category', 'group', 'department', 'class'],
   barcode: ['barcode', 'ean', 'upc', 'skucode', 'code'],
   batchNumber: ['batchnumber', 'batch', 'batchno', 'lot', 'lotnumber'],
@@ -209,6 +212,7 @@ export function parseProductsCsv(csvText: string): CsvImportParseResult {
     };
 
     const name = getCell('name');
+    const genericName = getCell('genericName');
     const barcode = getCell('barcode');
     const category = getCell('category') || 'General';
     const batchNumber = getCell('batchNumber');
@@ -269,6 +273,7 @@ export function parseProductsCsv(csvText: string): CsvImportParseResult {
     parsedRows.push({
       rowNumber: idx + 2,
       name,
+      genericName,
       barcode,
       category,
       unitsPerBox,
@@ -294,6 +299,7 @@ export function parseProductsCsv(csvText: string): CsvImportParseResult {
 
 export const CSV_IMPORT_TEMPLATE_HEADERS = [
   'Medicine Name',
+  'Generic Name',
   'Category',
   'Barcode',
   'Batch Number',
@@ -308,6 +314,7 @@ export const CSV_IMPORT_TEMPLATE_HEADERS = [
 export const CSV_IMPORT_TEMPLATE_ROWS: (string | number)[][] = [
   [
     'Augmentin 625mg Tablets',
+    'Co-Amoxiclav (Amoxicillin + Clavulanic Acid)',
     'Antibiotics',
     '896400109901',
     'AUG-26A',
@@ -320,6 +327,7 @@ export const CSV_IMPORT_TEMPLATE_ROWS: (string | number)[][] = [
   ],
   [
     'Panadol Extra Tablets',
+    'Paracetamol + Caffeine',
     'Analgesics',
     '896400109902',
     'PAN-26B',
@@ -332,6 +340,7 @@ export const CSV_IMPORT_TEMPLATE_ROWS: (string | number)[][] = [
   ],
   [
     'Risek 40mg Capsules',
+    'Omeprazole',
     'Gastro',
     '896400109903',
     'RSK-26C',
@@ -399,6 +408,7 @@ export function buildImportedInventoryResult(params: {
       working[matchIndex] = {
         ...existing,
         name: row.name.trim(),
+        genericName: row.genericName.trim() || existing.genericName || '',
         barcode: row.barcode.trim() || existing.barcode,
         category: row.category.trim() || existing.category,
         unitsPerBox: row.unitsPerBox,
@@ -417,6 +427,7 @@ export function buildImportedInventoryResult(params: {
       const created: PharmacyItem = {
         id: maxId,
         name: row.name.trim(),
+        genericName: row.genericName.trim(),
         barcode:
           row.barcode.trim() || `89640010${String(maxId).padStart(4, '0')}`,
         category: row.category.trim() || 'General',

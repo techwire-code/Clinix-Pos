@@ -11,6 +11,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 1,
     name: 'Panadol 500mg Tablets',
+    genericName: 'Paracetamol',
     barcode: '896400100101',
     category: 'Analgesics',
     unitsPerBox: 100,
@@ -26,6 +27,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 2,
     name: 'Augmentin 625mg Tablets',
+    genericName: 'Co-Amoxiclav (Amoxicillin + Clavulanic Acid)',
     barcode: '896400100204',
     category: 'Antibiotics',
     unitsPerBox: 6,
@@ -41,6 +43,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 3,
     name: 'Risek 20mg Capsules',
+    genericName: 'Omeprazole',
     barcode: '896400100309',
     category: 'Gastro',
     unitsPerBox: 14,
@@ -56,6 +59,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 4,
     name: 'Glucophage 500mg Tablets',
+    genericName: 'Metformin',
     barcode: '896400100411',
     category: 'Diabetes Care',
     unitsPerBox: 50,
@@ -71,6 +75,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 5,
     name: 'Brufen 400mg Tablets',
+    genericName: 'Ibuprofen',
     barcode: '896400100518',
     category: 'Analgesics',
     unitsPerBox: 20,
@@ -86,6 +91,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 6,
     name: 'CaC-1000 Plus Orange',
+    genericName: 'Calcium + Vitamin C',
     barcode: '896400100622',
     category: 'Supplements',
     unitsPerBox: 10,
@@ -101,6 +107,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 7,
     name: 'Rigix 10mg Cetirizine',
+    genericName: 'Cetirizine',
     barcode: '896400100733',
     category: 'Allergy',
     unitsPerBox: 10,
@@ -116,6 +123,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 8,
     name: 'Flagyl 400mg Tablets',
+    genericName: 'Metronidazole',
     barcode: '896400100845',
     category: 'Antibiotics',
     unitsPerBox: 20,
@@ -131,6 +139,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 9,
     name: 'Concor 5mg Bisoprolol',
+    genericName: 'Bisoprolol',
     barcode: '896400100951',
     category: 'Cardiac',
     unitsPerBox: 14,
@@ -146,6 +155,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 10,
     name: 'Arinac Forte Ibuprofen',
+    genericName: 'Ibuprofen + Pseudoephedrine',
     barcode: '896400101064',
     category: 'Analgesics',
     unitsPerBox: 10,
@@ -161,6 +171,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 11,
     name: 'Amoxil 500mg Capsules',
+    genericName: 'Amoxicillin',
     barcode: '896400101178',
     category: 'Antibiotics',
     unitsPerBox: 12,
@@ -176,6 +187,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 12,
     name: 'Lantus SoloStar Insulin Pen',
+    genericName: 'Insulin Glargine',
     barcode: '896400101289',
     category: 'Diabetes Care',
     unitsPerBox: 5,
@@ -191,6 +203,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 13,
     name: 'Augmentin DS Syrup 90ml',
+    genericName: 'Co-Amoxiclav (Amoxicillin + Clavulanic Acid)',
     barcode: '896400101395',
     category: 'Antibiotics',
     unitsPerBox: 1,
@@ -206,6 +219,7 @@ export const SEED_ITEMS: PharmacyItem[] = [
   {
     id: 14,
     name: 'Ventolin Evohaler 100mcg',
+    genericName: 'Salbutamol',
     barcode: '896400101401',
     category: 'Respiratory',
     unitsPerBox: 1,

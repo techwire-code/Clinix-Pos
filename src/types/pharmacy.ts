@@ -60,6 +60,7 @@ export interface PharmacySettings {
 export interface PharmacyItem {
   id: number;
   name: string;
+  genericName?: string;
   barcode: string;
   category: string;
   unitsPerBox: number; // Number of units inside 1 box
@@ -157,6 +158,7 @@ export interface PurchaseRecord {
 export interface PurchaseDraftLine {
   itemId: number | null; // null when creating a brand-new medicine inline
   itemName: string;
+  genericName?: string;
   barcode: string;
   category: string;
   unit: string;

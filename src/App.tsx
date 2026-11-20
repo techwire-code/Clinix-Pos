@@ -312,11 +312,13 @@ export default function App() {
       : 0;
 
     let next: PharmacyItem[];
+    const cleanGeneric = (payload.genericName ?? '').trim();
     if (payload.id) {
       const sanitized: PharmacyItem = {
         ...payload,
         id: payload.id,
         name: payload.name.trim(),
+        genericName: cleanGeneric,
         barcode:
           payload.barcode.trim() ||
           `89640010${String(payload.id).padStart(4, '0')}`,
@@ -339,6 +341,7 @@ export default function App() {
         ...payload,
         id: nextId,
         name: payload.name.trim(),
+        genericName: cleanGeneric,
         barcode:
           payload.barcode.trim() ||
           `89640010${String(nextId).padStart(4, '0')}`,
