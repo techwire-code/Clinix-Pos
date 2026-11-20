@@ -30,6 +30,10 @@ import {
   ThermalWidth,
   UserRole,
 } from '../types/pharmacy';
+import {
+  hashPinOrPassword,
+  isHashedPinOrPassword,
+} from './passwordHash';
 
 const STORAGE_KEYS = {
   items: 'clinix_pos_items_v1',
@@ -687,6 +691,7 @@ export function loadUsers(): PharmacyUser[] {
     const normalized: PharmacyUser[] = [];
     const seenUsernames = new Set<string>();
     let fallbackId = 1;
+    let migrated = false;
     for (const raw of existing) {
       if (!raw || typeof raw !== 'object') continue;
       const username = String(raw.username ?? '').trim();
@@ -699,12 +704,19 @@ export function loadUsers(): PharmacyUser[] {
           ? Math.floor(raw.id)
           : fallbackId;
       fallbackId = Math.max(fallbackId + 1, id + 1);
+      const rawPin = String(raw.pinOrPassword ?? '').trim() || '1234';
+      const hashedPin = isHashedPinOrPassword(rawPin)
+        ? rawPin
+        : (() => {
+            migrated = true;
+            return hashPinOrPassword(rawPin);
+          })();
       normalized.push({
         id,
         name: String(raw.name ?? '').trim() || username,
         username,
         role: normalizePharmacyUserRole(raw.role),
-        pinOrPassword: String(raw.pinOrPassword ?? '').trim() || '1234',
+        pinOrPassword: hashedPin,
         isActive:
           typeof raw.isActive === 'boolean' ? raw.isActive : true,
         createdAt:
@@ -728,6 +740,9 @@ export function loadUsers(): PharmacyUser[] {
               normalized.reduce((max, u) => Math.max(max, u.id), 0) + 1,
           });
         }
+        migrated = true;
+      }
+      if (migrated) {
         writeStorage(STORAGE_KEYS.users, normalized);
       }
       return normalized;
@@ -783,7 +798,7 @@ export function addPharmacyUser(
     name,
     username,
     role: normalizePharmacyUserRole(payload.role),
-    pinOrPassword,
+    pinOrPassword: hashPinOrPassword(pinOrPassword),
     isActive: payload.isActive ?? true,
     createdAt: new Date().toISOString(),
   };
@@ -809,7 +824,7 @@ export function updatePharmacyUser(
   const name = payload.name.trim();
   const username = payload.username.trim();
   const nextRole = normalizePharmacyUserRole(payload.role);
-  const nextPin = (payload.pinOrPassword ?? '').trim() || existing.pinOrPassword;
+  const rawNewPin = (payload.pinOrPassword ?? '').trim();
 
   if (!name) {
     throw new Error('Staff full name is required.');
@@ -820,9 +835,12 @@ export function updatePharmacyUser(
   if (/\s/.test(username)) {
     throw new Error('Username cannot contain spaces.');
   }
-  if (nextPin.length < 4) {
-    throw new Error('PIN / Password must be at least 4 characters.');
+  if (rawNewPin.length > 0 && rawNewPin.length < 4) {
+    throw new Error('New PIN / Password must be at least 4 characters.');
   }
+
+  const nextHashedPin =
+    rawNewPin.length > 0 ? hashPinOrPassword(rawNewPin) : existing.pinOrPassword;
 
   const duplicate = currentUsers.some(
     (u) =>
@@ -848,7 +866,7 @@ export function updatePharmacyUser(
           name,
           username,
           role: nextRole,
-          pinOrPassword: nextPin,
+          pinOrPassword: nextHashedPin,
           isActive: payload.isActive,
         }
       : u,

@@ -7,6 +7,8 @@ import {
   Coins,
   DatabaseBackup,
   Edit3,
+  Eye,
+  EyeOff,
   Globe2,
   Lock,
   Printer,
@@ -153,6 +155,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [userFormRole, setUserFormRole] =
     useState<PharmacyUserRole>('Cashier');
   const [userFormPin, setUserFormPin] = useState('');
+  const [userFormPinConfirm, setUserFormPinConfirm] = useState('');
+  const [showUserPin, setShowUserPin] = useState(false);
+  const [showUserPinConfirm, setShowUserPinConfirm] = useState(false);
   const [userFormActive, setUserFormActive] = useState(true);
   const [userFormError, setUserFormError] = useState<string | null>(null);
   const [deleteConfirmUser, setDeleteConfirmUser] =
@@ -316,6 +321,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const activeAdminCount = countActiveAdmins(users);
   const activeStaffCount = users.filter((u) => u.isActive).length;
 
+  const editingIsLastActiveAdmin = Boolean(
+    editingUser &&
+      editingUser.role === 'Admin' &&
+      editingUser.isActive &&
+      activeAdminCount <= 1,
+  );
+
   const openAddUserModal = () => {
     if (!isAdmin) {
       showNotice('error', 'Only an Admin can add new staff accounts.');
@@ -326,6 +338,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     setUserFormUsername('');
     setUserFormRole('Cashier');
     setUserFormPin('');
+    setUserFormPinConfirm('');
+    setShowUserPin(false);
+    setShowUserPinConfirm(false);
     setUserFormActive(true);
     setUserFormError(null);
     setUserModalOpen(true);
@@ -341,6 +356,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     setUserFormUsername(user.username);
     setUserFormRole(user.role);
     setUserFormPin('');
+    setUserFormPinConfirm('');
+    setShowUserPin(false);
+    setShowUserPinConfirm(false);
     setUserFormActive(user.isActive);
     setUserFormError(null);
     setUserModalOpen(true);
@@ -348,6 +366,20 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
   const handleSaveUserModal = () => {
     setUserFormError(null);
+    const cleanPin = userFormPin.trim();
+    const cleanPinConfirm = userFormPinConfirm.trim();
+
+    if (!editingUser || cleanPin.length > 0 || cleanPinConfirm.length > 0) {
+      if (cleanPin.length < 4) {
+        setUserFormError('PIN / Password must be at least 4 characters.');
+        return;
+      }
+      if (cleanPin !== cleanPinConfirm) {
+        setUserFormError('Password / PIN confirmation does not match.');
+        return;
+      }
+    }
+
     try {
       if (editingUser) {
         onUpdateUser({
@@ -355,19 +387,21 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           name: userFormName,
           username: userFormUsername,
           role: userFormRole,
-          pinOrPassword: userFormPin.trim() || undefined,
+          pinOrPassword: cleanPin || undefined,
           isActive: userFormActive,
         });
         showNotice(
           'success',
-          `Updated staff account "${userFormName.trim()}" (${userFormRole}).`,
+          cleanPin
+            ? `Updated "${userFormName.trim()}" (${userFormRole}) and hashed new PIN/Password.`
+            : `Updated staff account "${userFormName.trim()}" (${userFormRole}).`,
         );
       } else {
         onAddUser({
           name: userFormName,
           username: userFormUsername,
           role: userFormRole,
-          pinOrPassword: userFormPin,
+          pinOrPassword: cleanPin,
           isActive: userFormActive,
         });
         showNotice(
@@ -1660,10 +1694,11 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   <select
                     id="user-form-role"
                     value={userFormRole}
+                    disabled={editingIsLastActiveAdmin}
                     onChange={(e) =>
                       setUserFormRole(e.target.value as PharmacyUserRole)
                     }
-                    className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-[#0D7A5F] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     {USER_ROLE_CHOICES.map((r) => (
                       <option key={r} value={r}>
@@ -1680,33 +1715,100 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
                 >
                   {editingUser
-                    ? 'New PIN / Password (leave blank to keep current)'
-                    : 'PIN / Password (min 4 chars) *'}
+                    ? 'New Password / PIN (leave blank to keep unchanged)'
+                    : 'Password / PIN (min 4 chars) *'}
                 </label>
-                <input
-                  id="user-form-pin"
-                  type="password"
-                  value={userFormPin}
-                  onChange={(e) => setUserFormPin(e.target.value)}
-                  placeholder={editingUser ? '•••• (unchanged)' : 'Enter 4+ char PIN'}
-                  className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
+                <div className="relative">
+                  <input
+                    id="user-form-pin"
+                    type={showUserPin ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={userFormPin}
+                    onChange={(e) => setUserFormPin(e.target.value)}
+                    placeholder={editingUser ? '•••• (keep existing)' : 'Enter 4+ char PIN / password'}
+                    className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white py-2 pl-3 pr-10 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUserPin((s) => !s)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                    aria-label={showUserPin ? 'Hide password' : 'Show password'}
+                  >
+                    {showUserPin ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
               </div>
 
-              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-800/50">
+              <div>
+                <label
+                  htmlFor="user-form-pin-confirm"
+                  className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                >
+                  {editingUser
+                    ? 'Confirm New Password / PIN'
+                    : 'Confirm Password / PIN *'}
+                </label>
+                <div className="relative">
+                  <input
+                    id="user-form-pin-confirm"
+                    type={showUserPinConfirm ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={userFormPinConfirm}
+                    onChange={(e) => setUserFormPinConfirm(e.target.value)}
+                    placeholder={
+                      editingUser ? 'Re-enter new password / PIN' : 'Confirm password / PIN'
+                    }
+                    className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white py-2 pl-3 pr-10 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUserPinConfirm((s) => !s)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                    aria-label={
+                      showUserPinConfirm
+                        ? 'Hide confirmation password'
+                        : 'Show confirmation password'
+                    }
+                  >
+                    {showUserPinConfirm ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  Stored securely as a salted SHA-256 hash — never saved in plain text.
+                </p>
+              </div>
+
+              <label
+                className={`flex items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5 ${
+                  editingIsLastActiveAdmin
+                    ? 'cursor-not-allowed border-amber-200 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/20'
+                    : 'cursor-pointer border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50'
+                }`}
+              >
                 <div>
                   <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
                     Account Active
                   </p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Disabled users cannot sign in to POS billing
+                    {editingIsLastActiveAdmin
+                      ? 'Last active Admin cannot be demoted or deactivated'
+                      : 'Disabled users cannot sign in to POS billing'}
                   </p>
                 </div>
                 <input
                   type="checkbox"
                   checked={userFormActive}
+                  disabled={editingIsLastActiveAdmin}
                   onChange={(e) => setUserFormActive(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-[#0D7A5F] focus:ring-[#0D7A5F] dark:border-slate-600 dark:bg-slate-800"
+                  className="h-4 w-4 rounded border-slate-300 text-[#0D7A5F] focus:ring-[#0D7A5F] disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800"
                 />
               </label>
             </div>

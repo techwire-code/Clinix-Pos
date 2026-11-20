@@ -480,9 +480,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
     final usernameCtrl = TextEditingController(text: existing?.username ?? '');
     final pinCtrl = TextEditingController();
+    final confirmPinCtrl = TextEditingController();
     UserRole selectedRole = existing?.role ?? UserRole.cashier;
     bool isActive = existing?.isActive ?? true;
+    bool showPin = false;
+    bool showConfirmPin = false;
     String? dialogError;
+
+    final bool isLastActiveAdmin = existing != null &&
+        existing.role == UserRole.admin &&
+        existing.isActive &&
+        _activeAdminCount <= 1;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -545,20 +553,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       )
                       .toList(),
-                  onChanged: (val) {
-                    if (val != null) setDialogState(() => selectedRole = val);
-                  },
+                  onChanged: isLastActiveAdmin
+                      ? null
+                      : (val) {
+                          if (val != null) {
+                            setDialogState(() => selectedRole = val);
+                          }
+                        },
                 ),
                 const SizedBox(height: 10),
                 TextField(
                   controller: pinCtrl,
-                  obscureText: true,
+                  obscureText: !showPin,
                   decoration: InputDecoration(
                     labelText: existing == null
-                        ? 'PIN / Password (min 4 chars) *'
-                        : 'New PIN / Password (leave blank to keep)',
+                        ? 'Password / PIN (min 4 chars) *'
+                        : 'New Password / PIN (leave blank to keep)',
                     border: const OutlineInputBorder(),
                     isDense: true,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showPin
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                      onPressed: () =>
+                          setDialogState(() => showPin = !showPin),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: confirmPinCtrl,
+                  obscureText: !showConfirmPin,
+                  decoration: InputDecoration(
+                    labelText: existing == null
+                        ? 'Confirm Password / PIN *'
+                        : 'Confirm New Password / PIN',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showConfirmPin
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                      onPressed: () => setDialogState(
+                        () => showConfirmPin = !showConfirmPin,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Stored securely as salted SHA-256 hash.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade600,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -568,8 +622,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'Account Active',
                     style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
                   ),
+                  subtitle: isLastActiveAdmin
+                      ? Text(
+                          'Last active Admin cannot be deactivated or demoted',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.amber.shade900,
+                          ),
+                        )
+                      : null,
                   value: isActive,
-                  onChanged: (val) => setDialogState(() => isActive = val),
+                  onChanged: isLastActiveAdmin
+                      ? null
+                      : (val) => setDialogState(() => isActive = val),
                 ),
               ],
             ),
@@ -584,6 +649,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 backgroundColor: const Color(0xFF0D7A5F),
               ),
               onPressed: () async {
+                final newPin = pinCtrl.text.trim();
+                final confirmPin = confirmPinCtrl.text.trim();
+                if (existing == null ||
+                    newPin.isNotEmpty ||
+                    confirmPin.isNotEmpty) {
+                  if (newPin.length < 4) {
+                    setDialogState(() {
+                      dialogError =
+                          'Password / PIN must be at least 4 characters.';
+                    });
+                    return;
+                  }
+                  if (newPin != confirmPin) {
+                    setDialogState(() {
+                      dialogError =
+                          'Password / PIN confirmation does not match.';
+                    });
+                    return;
+                  }
+                }
                 try {
                   if (existing == null) {
                     await DatabaseHelper.instance.insertUser(
@@ -591,7 +676,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         name: nameCtrl.text.trim(),
                         username: usernameCtrl.text.trim(),
                         role: selectedRole,
-                        pinOrPassword: pinCtrl.text.trim(),
+                        pinOrPassword: newPin,
                         isActive: isActive,
                         createdAt: DateTime.now().toIso8601String(),
                       ),
@@ -602,9 +687,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         name: nameCtrl.text.trim(),
                         username: usernameCtrl.text.trim(),
                         role: selectedRole,
-                        pinOrPassword: pinCtrl.text.trim().isEmpty
-                            ? existing.pinOrPassword
-                            : pinCtrl.text.trim(),
+                        pinOrPassword: newPin,
                         isActive: isActive,
                       ),
                     );
@@ -629,6 +712,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     nameCtrl.dispose();
     usernameCtrl.dispose();
     pinCtrl.dispose();
+    confirmPinCtrl.dispose();
 
     if (saved == true) {
       await _loadUsers();

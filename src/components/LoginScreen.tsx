@@ -15,6 +15,7 @@ import {
   UserRole,
 } from '../types/pharmacy';
 import { loadUsers, toUserRoleKey } from '../services/localDb';
+import { verifyPinOrPassword } from '../services/passwordHash';
 import { ThemeMode } from '../services/themeService';
 
 export interface StaffSession {
@@ -44,13 +45,18 @@ function getRoleScopeSummary(role: PharmacyUserRole): string {
   }
 }
 
-function isFactoryDefaultPin(user: PharmacyUser): boolean {
+function getFactoryDefaultPin(user: PharmacyUser): string | null {
   const lower = user.username.toLowerCase();
-  return (
-    (lower === 'admin' && user.pinOrPassword === '1234') ||
-    (lower === 'manager' && user.pinOrPassword === '2222') ||
-    (lower === 'user' && user.pinOrPassword === '1111')
-  );
+  if (lower === 'admin' && verifyPinOrPassword('1234', user.pinOrPassword)) {
+    return '1234';
+  }
+  if (lower === 'manager' && verifyPinOrPassword('2222', user.pinOrPassword)) {
+    return '2222';
+  }
+  if (lower === 'user' && verifyPinOrPassword('1111', user.pinOrPassword)) {
+    return '1111';
+  }
+  return null;
 }
 
 interface LoginScreenProps {
@@ -104,7 +110,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       );
     }
 
-    if (!matched || matched.pinOrPassword !== cleanPin) {
+    if (!matched || !verifyPinOrPassword(cleanPin, matched.pinOrPassword)) {
       setError(
         'Invalid Staff ID or PIN / Password. Select a staff profile or check credentials.',
       );
@@ -131,8 +137,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   const handleQuickFill = (account: PharmacyUser) => {
     setUsername(account.username);
-    if (isFactoryDefaultPin(account)) {
-      setPin(account.pinOrPassword);
+    const defaultPin = getFactoryDefaultPin(account);
+    if (defaultPin) {
+      setPin(defaultPin);
     } else {
       setPin('');
       window.setTimeout(() => pinInputRef.current?.focus(), 0);
@@ -267,7 +274,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             {activeUsers.map((acc) => {
               const selected =
                 username.trim().toLowerCase() === acc.username.toLowerCase();
-              const showDemoCred = isFactoryDefaultPin(acc);
+              const defaultPin = getFactoryDefaultPin(acc);
               return (
                 <button
                   key={acc.id}
@@ -284,8 +291,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                       {acc.name} · {acc.role}
                     </p>
                     <span className="font-mono-tabular text-[11px] font-medium text-slate-600 dark:text-slate-300">
-                      {showDemoCred
-                        ? `${acc.username} / ${acc.pinOrPassword}`
+                      {defaultPin
+                        ? `${acc.username} / ${defaultPin}`
                         : `@${acc.username}`}
                     </span>
                   </div>

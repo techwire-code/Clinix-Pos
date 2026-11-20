@@ -10,6 +10,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/pharmacy_models.dart';
+import '../utils/password_hash.dart';
 
 /// Singleton offline-first SQLite database helper for Clinix Community Pharmacy.
 /// Supports Android/iOS (sqflite) as well as Windows/macOS/Linux desktop (sqflite_common_ffi).
@@ -223,7 +224,7 @@ class DatabaseHelper {
         name: 'Dr. Khalid Minhas',
         username: 'admin',
         role: UserRole.admin,
-        pinOrPassword: '1234',
+        pinOrPassword: PasswordHash.hash('1234', customSalt: 'clinixseed1'),
         isActive: true,
         createdAt: nowIso,
       ),
@@ -231,7 +232,7 @@ class DatabaseHelper {
         name: 'Bilal Ahmad',
         username: 'manager',
         role: UserRole.manager,
-        pinOrPassword: '2222',
+        pinOrPassword: PasswordHash.hash('2222', customSalt: 'clinixseed2'),
         isActive: true,
         createdAt: nowIso,
       ),
@@ -239,7 +240,7 @@ class DatabaseHelper {
         name: 'Counter User',
         username: 'user',
         role: UserRole.cashier,
-        pinOrPassword: '1111',
+        pinOrPassword: PasswordHash.hash('1111', customSalt: 'clinixseed3'),
         isActive: true,
         createdAt: nowIso,
       ),
@@ -1068,7 +1069,24 @@ class DatabaseHelper {
     await _createUsersTable(db);
     await _seedDefaultUsersIfEmpty(db);
     final rows = await db.query('users', orderBy: 'id ASC');
-    return rows.map(PharmacyUser.fromMap).toList();
+    final parsed = <PharmacyUser>[];
+    for (final row in rows) {
+      var user = PharmacyUser.fromMap(row);
+      if (user.id != null &&
+          user.pinOrPassword.isNotEmpty &&
+          !PasswordHash.isHashed(user.pinOrPassword)) {
+        final hashed = PasswordHash.hash(user.pinOrPassword);
+        await db.update(
+          'users',
+          {'pin_or_password': hashed},
+          where: 'id = ?',
+          whereArgs: [user.id],
+        );
+        user = user.copyWith(pinOrPassword: hashed);
+      }
+      parsed.add(user);
+    }
+    return parsed;
   }
 
   Future<int> countActiveAdmins() async {
@@ -1105,7 +1123,8 @@ class DatabaseHelper {
       }
     }
 
-    if (matched == null || matched.pinOrPassword != cleanPin) {
+    if (matched == null ||
+        !PasswordHash.verify(cleanPin, matched.pinOrPassword)) {
       return null;
     }
     if (!matched.isActive) {
@@ -1149,7 +1168,7 @@ class DatabaseHelper {
           .copyWith(
             name: cleanName,
             username: cleanUsername,
-            pinOrPassword: cleanPin,
+            pinOrPassword: PasswordHash.hash(cleanPin),
           )
           .toMap(),
     );
@@ -1170,9 +1189,7 @@ class DatabaseHelper {
 
     final cleanName = user.name.trim();
     final cleanUsername = user.username.trim();
-    final cleanPin = user.pinOrPassword.trim().isEmpty
-        ? existingUser.pinOrPassword
-        : user.pinOrPassword.trim();
+    final rawNewPin = user.pinOrPassword.trim();
 
     if (cleanName.isEmpty) {
       throw ArgumentError('Staff full name is required.');
@@ -1180,8 +1197,15 @@ class DatabaseHelper {
     if (cleanUsername.isEmpty || cleanUsername.contains(' ')) {
       throw ArgumentError('Valid username without spaces is required.');
     }
-    if (cleanPin.length < 4) {
-      throw ArgumentError('PIN / Password must be at least 4 characters.');
+
+    final String nextHashedPin;
+    if (rawNewPin.isEmpty || rawNewPin == existingUser.pinOrPassword) {
+      nextHashedPin = existingUser.pinOrPassword;
+    } else {
+      if (!PasswordHash.isHashed(rawNewPin) && rawNewPin.length < 4) {
+        throw ArgumentError('New PIN / Password must be at least 4 characters.');
+      }
+      nextHashedPin = PasswordHash.hash(rawNewPin);
     }
 
     final duplicate = users.any(
@@ -1209,7 +1233,7 @@ class DatabaseHelper {
         .copyWith(
           name: cleanName,
           username: cleanUsername,
-          pinOrPassword: cleanPin,
+          pinOrPassword: nextHashedPin,
         )
         .toMap()
       ..remove('id');

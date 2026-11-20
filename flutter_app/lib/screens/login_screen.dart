@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
+import '../utils/password_hash.dart';
 
 class LoginScreen extends StatefulWidget {
   final String pharmacyName;
@@ -59,11 +60,18 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  bool _isFactoryDefaultPin(PharmacyUser user) {
+  String? _getFactoryDefaultPin(PharmacyUser user) {
     final lower = user.username.trim().toLowerCase();
-    return (lower == 'admin' && user.pinOrPassword == '1234') ||
-        (lower == 'manager' && user.pinOrPassword == '2222') ||
-        (lower == 'user' && user.pinOrPassword == '1111');
+    if (lower == 'admin' && PasswordHash.verify('1234', user.pinOrPassword)) {
+      return '1234';
+    }
+    if (lower == 'manager' && PasswordHash.verify('2222', user.pinOrPassword)) {
+      return '2222';
+    }
+    if (lower == 'user' && PasswordHash.verify('1111', user.pinOrPassword)) {
+      return '1111';
+    }
+    return null;
   }
 
   String _roleScopeSummary(UserRole role) {
@@ -80,10 +88,11 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _handleQuickFill(PharmacyUser user) {
+    final defaultPin = _getFactoryDefaultPin(user);
     setState(() {
       _usernameCtrl.text = user.username;
-      if (_isFactoryDefaultPin(user)) {
-        _pinCtrl.text = user.pinOrPassword;
+      if (defaultPin != null) {
+        _pinCtrl.text = defaultPin;
       } else {
         _pinCtrl.clear();
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -277,7 +286,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           final isSelected =
                               _usernameCtrl.text.trim().toLowerCase() ==
                                   acc.username.trim().toLowerCase();
-                          final showCred = _isFactoryDefaultPin(acc);
+                          final defaultPin = _getFactoryDefaultPin(acc);
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: InkWell(
@@ -313,8 +322,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                           ),
                                         ),
                                         Text(
-                                          showCred
-                                              ? '${acc.username} / ${acc.pinOrPassword}'
+                                          defaultPin != null
+                                              ? '${acc.username} / $defaultPin'
                                               : '@${acc.username}',
                                           style: TextStyle(
                                             fontSize: 11.5,

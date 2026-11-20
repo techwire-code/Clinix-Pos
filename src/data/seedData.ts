@@ -7,6 +7,7 @@ import {
   PurchaseRecord,
   SaleRecord,
 } from '../types/pharmacy';
+import { hashPinOrPassword } from '../services/passwordHash';
 
 export const SEED_ITEMS: PharmacyItem[] = [
   {
@@ -694,7 +695,7 @@ export const SEED_USERS: PharmacyUser[] = [
     name: 'Dr. Khalid Minhas',
     username: 'admin',
     role: 'Admin',
-    pinOrPassword: '1234',
+    pinOrPassword: hashPinOrPassword('1234', 'clinixseed1'),
     isActive: true,
     createdAt: '2026-01-01T09:00:00.000Z',
   },
@@ -703,7 +704,7 @@ export const SEED_USERS: PharmacyUser[] = [
     name: 'Bilal Ahmad',
     username: 'manager',
     role: 'Manager',
-    pinOrPassword: '2222',
+    pinOrPassword: hashPinOrPassword('2222', 'clinixseed2'),
     isActive: true,
     createdAt: '2026-01-05T09:00:00.000Z',
   },
@@ -712,7 +713,7 @@ export const SEED_USERS: PharmacyUser[] = [
     name: 'Counter User',
     username: 'user',
     role: 'Cashier',
-    pinOrPassword: '1111',
+    pinOrPassword: hashPinOrPassword('1111', 'clinixseed3'),
     isActive: true,
     createdAt: '2026-01-10T09:00:00.000Z',
   },
