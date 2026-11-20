@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Eye,
   EyeOff,
@@ -9,13 +9,19 @@ import {
   Sun,
   User,
 } from 'lucide-react';
-import { UserRole } from '../types/pharmacy';
+import {
+  PharmacyUser,
+  PharmacyUserRole,
+  UserRole,
+} from '../types/pharmacy';
+import { loadUsers, toUserRoleKey } from '../services/localDb';
 import { ThemeMode } from '../services/themeService';
 
 export interface StaffSession {
+  userId?: number;
   username: string;
   displayName: string;
-  role: 'Admin' | 'Manager' | 'User (Limited Access)';
+  role: PharmacyUserRole | 'User (Limited Access)';
   roleKey: UserRole;
   loggedInAt: string;
 }
@@ -24,59 +30,60 @@ export function isManagerOrAdminRole(roleKey?: UserRole): boolean {
   return roleKey === 'admin' || roleKey === 'manager';
 }
 
-interface StaffCredential {
-  username: string;
-  aliases?: string[];
-  pin: string;
-  displayName: string;
-  role: 'Admin' | 'Manager' | 'User (Limited Access)';
-  roleKey: UserRole;
-  scopeSummary: string;
+function getRoleScopeSummary(role: PharmacyUserRole): string {
+  switch (role) {
+    case 'Admin':
+      return 'Full access: POS, Profit view, Users & Roles, Backups & Settings';
+    case 'Manager':
+      return 'Manager access: POS, Cost/Net Profit, Khata Ledger, Purchases & Reports';
+    case 'Sales Staff':
+      return 'Sales Staff: POS Billing, Read-only Stock & Own Receipts (Cost/Profit hidden)';
+    case 'Cashier':
+    default:
+      return 'Cashier: POS Billing, Read-only Stock & Own Receipts (Cost/Profit hidden)';
+  }
 }
 
-const STAFF_ACCOUNTS: StaffCredential[] = [
-  {
-    username: 'admin',
-    pin: '1234',
-    displayName: 'Dr. Khalid Minhas',
-    role: 'Admin',
-    roleKey: 'admin',
-    scopeSummary: 'Full access: POS, Profit view, Inventory edit, Accounts & Settings',
-  },
-  {
-    username: 'manager',
-    pin: '2222',
-    displayName: 'Bilal Ahmad (Manager)',
-    role: 'Manager',
-    roleKey: 'manager',
-    scopeSummary: 'Manager access: POS, Cost/Net Profit, Khata Ledger & Reports',
-  },
-  {
-    username: 'user',
-    aliases: ['cashier', 'sales'],
-    pin: '1111',
-    displayName: 'Counter User (Cashier)',
-    role: 'User (Limited Access)',
-    roleKey: 'user',
-    scopeSummary: 'Cashier / Sales Staff: POS Billing, Read-only Stock & Own Receipts',
-  },
-];
+function isFactoryDefaultPin(user: PharmacyUser): boolean {
+  const lower = user.username.toLowerCase();
+  return (
+    (lower === 'admin' && user.pinOrPassword === '1234') ||
+    (lower === 'manager' && user.pinOrPassword === '2222') ||
+    (lower === 'user' && user.pinOrPassword === '1111')
+  );
+}
 
 interface LoginScreenProps {
   theme: ThemeMode;
+  users?: PharmacyUser[];
+  pharmacyName?: string;
+  pharmacyAddress?: string;
   onToggleTheme: () => void;
   onLoginSuccess: (session: StaffSession) => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   theme,
+  users,
+  pharmacyName = 'Clinix Community Pharmacy',
+  pharmacyAddress = '17 KM Ferozepur Road, Lahore',
   onToggleTheme,
   onLoginSuccess,
 }) => {
+  const availableUsers = useMemo(
+    () => (users && users.length > 0 ? users : loadUsers()),
+    [users],
+  );
+  const activeUsers = useMemo(
+    () => availableUsers.filter((u) => u.isActive),
+    [availableUsers],
+  );
+
   const [username, setUsername] = useState('user');
   const [pin, setPin] = useState('1111');
   const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pinInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,33 +95,48 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       return;
     }
 
-    const matched = STAFF_ACCOUNTS.find(
-      (acc) =>
-        (acc.username.toLowerCase() === cleanUser ||
-          acc.aliases?.includes(cleanUser)) &&
-        acc.pin === cleanPin,
+    let matched = availableUsers.find(
+      (u) => u.username.trim().toLowerCase() === cleanUser,
     );
+    if (!matched && (cleanUser === 'cashier' || cleanUser === 'sales')) {
+      matched = availableUsers.find(
+        (u) => u.username.trim().toLowerCase() === 'user',
+      );
+    }
 
-    if (!matched) {
+    if (!matched || matched.pinOrPassword !== cleanPin) {
       setError(
-        'Invalid Staff ID or PIN. Use user / 1111 (Limited) or admin / 1234 (Admin).',
+        'Invalid Staff ID or PIN / Password. Select a staff profile or check credentials.',
+      );
+      return;
+    }
+
+    if (!matched.isActive) {
+      setError(
+        `Account "${matched.username}" is currently disabled. Contact an Admin to re-enable access.`,
       );
       return;
     }
 
     setError(null);
     onLoginSuccess({
+      userId: matched.id,
       username: matched.username,
-      displayName: matched.displayName,
+      displayName: matched.name,
       role: matched.role,
-      roleKey: matched.roleKey,
+      roleKey: toUserRoleKey(matched.role),
       loggedInAt: new Date().toISOString(),
     });
   };
 
-  const handleQuickFill = (account: StaffCredential) => {
+  const handleQuickFill = (account: PharmacyUser) => {
     setUsername(account.username);
-    setPin(account.pin);
+    if (isFactoryDefaultPin(account)) {
+      setPin(account.pinOrPassword);
+    } else {
+      setPin('');
+      window.setTimeout(() => pinInputRef.current?.focus(), 0);
+    }
     setError(null);
   };
 
@@ -149,10 +171,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             </span>
           </div>
           <h1 className="mt-2 font-display text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Clinix Community Pharmacy
+            {pharmacyName}
           </h1>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            17 KM Ferozepur Road, Lahore · Staff Authentication
+            {pharmacyAddress} · Staff Authentication
           </p>
         </div>
 
@@ -182,7 +204,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="user or admin"
+                placeholder="Enter username (e.g. admin, manager, user)"
                 className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none focus:ring-2 focus:ring-[#0D7A5F]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-emerald-500"
               />
             </div>
@@ -198,12 +220,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <div className="relative">
               <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
+                ref={pinInputRef}
                 id="login-pin"
                 type={showPin ? 'text' : 'password'}
                 autoComplete="current-password"
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
-                placeholder="Enter staff PIN"
+                placeholder="Enter staff PIN / password"
                 className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-10 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none focus:ring-2 focus:ring-[#0D7A5F]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-emerald-500"
               />
               <button
@@ -230,22 +253,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           </button>
         </form>
 
-        {/* Staff Account Presets */}
+        {/* Active Staff Accounts */}
         <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            Select Role Profile
-          </p>
-          <div className="mt-2 grid grid-cols-1 gap-2">
-            {STAFF_ACCOUNTS.map((acc) => {
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              Active Staff Accounts ({activeUsers.length})
+            </p>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+              Tap to fill username
+            </span>
+          </div>
+          <div className="mt-2 grid max-h-56 grid-cols-1 gap-2 overflow-y-auto pr-0.5">
+            {activeUsers.map((acc) => {
               const selected =
-                (username.trim().toLowerCase() === acc.username ||
-                  Boolean(
-                    acc.aliases?.includes(username.trim().toLowerCase()),
-                  )) &&
-                pin.trim() === acc.pin;
+                username.trim().toLowerCase() === acc.username.toLowerCase();
+              const showDemoCred = isFactoryDefaultPin(acc);
               return (
                 <button
-                  key={acc.username}
+                  key={acc.id}
                   type="button"
                   onClick={() => handleQuickFill(acc)}
                   className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
@@ -256,14 +281,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                      {acc.displayName} · {acc.role}
+                      {acc.name} · {acc.role}
                     </p>
                     <span className="font-mono-tabular text-[11px] font-medium text-slate-600 dark:text-slate-300">
-                      {acc.username} / {acc.pin}
+                      {showDemoCred
+                        ? `${acc.username} / ${acc.pinOrPassword}`
+                        : `@${acc.username}`}
                     </span>
                   </div>
                   <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    {acc.scopeSummary}
+                    {getRoleScopeSummary(acc.role)}
                   </p>
                 </button>
               );

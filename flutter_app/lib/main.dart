@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'database/db_helper.dart';
 import 'models/pharmacy_models.dart';
+import 'screens/login_screen.dart';
 import 'screens/pos_screen.dart';
 import 'screens/printer_settings_screen.dart';
 import 'screens/settings_screen.dart';
@@ -30,6 +31,8 @@ class ClinixPharmacyApp extends StatelessWidget {
   }
 }
 
+enum _ShellSection { pos, printer, settings, users }
+
 class _ClinixHomeShell extends StatefulWidget {
   const _ClinixHomeShell();
 
@@ -40,7 +43,8 @@ class _ClinixHomeShell extends StatefulWidget {
 class _ClinixHomeShellState extends State<_ClinixHomeShell> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  int _selectedIndex = 0;
+  PharmacyUser? _currentUser;
+  _ShellSection _activeSection = _ShellSection.pos;
   PharmacySettings _settings = PharmacySettings.defaults();
   bool _loadedSettings = false;
 
@@ -59,48 +63,159 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
     });
   }
 
+  Future<void> _syncCurrentUserFromDb() async {
+    final user = _currentUser;
+    if (user == null) return;
+    final all = await DatabaseHelper.instance.getUsers();
+    if (!mounted) return;
+    final matched = all.where(
+      (u) =>
+          (user.id != null && u.id == user.id) ||
+          u.username.toLowerCase() == user.username.toLowerCase(),
+    );
+    if (matched.isEmpty || !matched.first.isActive) {
+      setState(() {
+        _currentUser = null;
+        _activeSection = _ShellSection.pos;
+      });
+      return;
+    }
+    final latest = matched.first;
+    if (latest.role != user.role ||
+        latest.name != user.name ||
+        latest.username != user.username) {
+      final updatedSettings = await DatabaseHelper.instance.saveSettings(
+        _settings.copyWith(activeUserRole: latest.role),
+      );
+      if (!mounted) return;
+      setState(() {
+        _currentUser = latest;
+        _settings = updatedSettings;
+      });
+    }
+  }
+
+  Future<void> _handleLoginSuccess(PharmacyUser user) async {
+    final updated = await DatabaseHelper.instance.saveSettings(
+      _settings.copyWith(activeUserRole: user.role),
+    );
+    if (!mounted) return;
+    setState(() {
+      _currentUser = user;
+      _settings = updated;
+      _activeSection = _ShellSection.pos;
+    });
+  }
+
+  void _handleLogout() {
+    setState(() {
+      _currentUser = null;
+      _activeSection = _ShellSection.pos;
+    });
+  }
+
   void _openDrawer() {
     _scaffoldKey.currentState?.openDrawer();
   }
 
-  void _selectDestination(int index) {
-    setState(() => _selectedIndex = index);
-    if (index != 2) {
-      // Refresh settings when returning to POS/Printer in case PrinterSettingsScreen updated defaults
+  void _selectSection(_ShellSection section) {
+    setState(() => _activeSection = section);
+    if (section == _ShellSection.pos || section == _ShellSection.printer) {
       _loadSettings();
-    }
-  }
-
-  Widget _buildActivePage() {
-    switch (_selectedIndex) {
-      case 1:
-        return const PrinterSettingsScreen();
-      case 2:
-        return SettingsScreen(
-          initialSettings: _settings,
-          onOpenDrawer: _openDrawer,
-          onSettingsChanged: (next) {
-            setState(() => _settings = next);
-          },
-        );
-      case 0:
-      default:
-        return PosScreen(
-          settings: _settings,
-          onOpenDrawer: _openDrawer,
-        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!_loadedSettings) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final user = _currentUser;
+    if (user == null) {
+      return LoginScreen(
+        pharmacyName: _settings.pharmacyName,
+        pharmacyAddress: _settings.address,
+        onLoginSuccess: _handleLoginSuccess,
+      );
+    }
+
+    final bool isAdmin = user.role == UserRole.admin;
+    final bool isManagerOrAdmin = user.role.canViewProfitAndCost;
+
+    final List<({ _ShellSection section, String label, IconData icon, IconData selectedIcon })>
+        availableDestinations = [
+      (
+        section: _ShellSection.pos,
+        label: 'POS Billing',
+        icon: Icons.point_of_sale_outlined,
+        selectedIcon: Icons.point_of_sale,
+      ),
+      if (isManagerOrAdmin)
+        (
+          section: _ShellSection.printer,
+          label: 'Thermal Printer',
+          icon: Icons.print_outlined,
+          selectedIcon: Icons.print,
+        ),
+      if (isManagerOrAdmin)
+        (
+          section: _ShellSection.settings,
+          label: 'Settings',
+          icon: Icons.settings_outlined,
+          selectedIcon: Icons.settings,
+        ),
+      if (isAdmin)
+        (
+          section: _ShellSection.users,
+          label: 'Users & Roles',
+          icon: Icons.manage_accounts_outlined,
+          selectedIcon: Icons.manage_accounts,
+        ),
+    ];
+
+    int selectedIndex = availableDestinations
+        .indexWhere((d) => d.section == _activeSection);
+    if (selectedIndex < 0) selectedIndex = 0;
+    final currentSection = availableDestinations[selectedIndex].section;
+
+    Widget activePage;
+    switch (currentSection) {
+      case _ShellSection.printer:
+        activePage = const PrinterSettingsScreen();
+        break;
+      case _ShellSection.settings:
+      case _ShellSection.users:
+        activePage = SettingsScreen(
+          initialSettings: _settings,
+          currentUserRole: user.role,
+          currentUsername: user.username,
+          focusUsersSection: currentSection == _ShellSection.users,
+          onOpenDrawer: _openDrawer,
+          onSettingsChanged: (next) {
+            setState(() => _settings = next);
+          },
+          onUsersChanged: _syncCurrentUserFromDb,
+        );
+        break;
+      case _ShellSection.pos:
+        activePage = PosScreen(
+          settings: _settings,
+          currentUserRole: user.role,
+          onOpenDrawer: _openDrawer,
+        );
+        break;
+    }
+
     return Scaffold(
       key: _scaffoldKey,
       drawer: NavigationDrawer(
-        selectedIndex: _selectedIndex,
+        selectedIndex: selectedIndex,
         onDestinationSelected: (idx) {
           Navigator.of(context).pop();
-          _selectDestination(idx);
+          _selectSection(availableDestinations[idx].section);
         },
         children: [
           Padding(
@@ -126,11 +241,17 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Role: ${_settings.activeUserRole.label} · ${CurrencyFormatter.unitLabel(_settings)}',
+                  '${user.name} (${user.role.label})',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  '@${user.username} · ${CurrencyFormatter.unitLabel(_settings)}',
                   style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
+                    fontSize: 11.5,
+                    color: Colors.grey.shade700,
                   ),
                 ),
               ],
@@ -138,47 +259,48 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
           ),
           const Divider(height: 1),
           const SizedBox(height: 8),
-          const NavigationDrawerDestination(
-            icon: Icon(Icons.point_of_sale_outlined),
-            selectedIcon: Icon(Icons.point_of_sale),
-            label: Text('POS Billing'),
+          ...availableDestinations.map(
+            (dest) => NavigationDrawerDestination(
+              icon: Icon(dest.icon),
+              selectedIcon: Icon(dest.selectedIcon),
+              label: Text(dest.label),
+            ),
           ),
-          const NavigationDrawerDestination(
-            icon: Icon(Icons.print_outlined),
-            selectedIcon: Icon(Icons.print),
-            label: Text('Thermal Printer'),
-          ),
-          const NavigationDrawerDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: Text('Settings'),
-          ),
-        ],
-      ),
-      body: _loadedSettings
-          ? _buildActivePage()
-          : const Center(child: CircularProgressIndicator()),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _selectDestination,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.point_of_sale_outlined),
-            selectedIcon: Icon(Icons.point_of_sale),
-            label: 'POS Billing',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.print_outlined),
-            selectedIcon: Icon(Icons.print),
-            label: 'Printer',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
+          const Divider(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _handleLogout();
+              },
+              icon: const Icon(Icons.logout, size: 18),
+              label: const Text('Sign Out'),
+            ),
           ),
         ],
       ),
+      body: activePage,
+      bottomNavigationBar: availableDestinations.length > 1
+          ? NavigationBar(
+              selectedIndex: selectedIndex,
+              onDestinationSelected: (idx) =>
+                  _selectSection(availableDestinations[idx].section),
+              destinations: availableDestinations
+                  .map(
+                    (dest) => NavigationDestination(
+                      icon: Icon(dest.icon),
+                      selectedIcon: Icon(dest.selectedIcon),
+                      label: dest.label == 'Thermal Printer'
+                          ? 'Printer'
+                          : dest.label == 'Users & Roles'
+                              ? 'Users'
+                              : dest.label,
+                    ),
+                  )
+                  .toList(),
+            )
+          : null,
     );
   }
 }

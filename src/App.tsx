@@ -14,6 +14,7 @@ import {
   ShoppingBag,
   Sun,
   Truck,
+  UserCog,
   Users,
   X,
 } from 'lucide-react';
@@ -24,13 +25,17 @@ import {
   PaymentMode,
   PharmacyItem,
   PharmacySettings,
+  PharmacyUser,
+  PharmacyUserRole,
   PrinterConfig,
   PurchaseDraftLine,
   PurchaseRecord,
   SaleRecord,
 } from './types/pharmacy';
 import {
+  addPharmacyUser,
   calculateUnitPrice,
+  deletePharmacyUser,
   executePurchaseTransaction,
   executeSaleTransaction,
   exportDatabaseBackupJson,
@@ -42,6 +47,7 @@ import {
   loadPurchases,
   loadSales,
   loadSettings,
+  loadUsers,
   resetDemoDatabase,
   resetSettingsToDefaults,
   saveExpenses,
@@ -49,7 +55,11 @@ import {
   saveParties,
   savePrinterConfig,
   saveSettings,
+  toCounterRole,
+  togglePharmacyUserActive,
   toThermalWidth,
+  toUserRoleKey,
+  updatePharmacyUser,
 } from './services/localDb';
 import {
   isManagerOrAdminRole,
@@ -88,14 +98,16 @@ type NavTab =
   | 'reports'
   | 'printer'
   | 'settings'
+  | 'users'
   | 'dart';
 
 const IS_DEBUG_MODE = import.meta.env.DEV;
 
-const ADMIN_NAV_ITEMS: {
+const MANAGER_ADMIN_BASE_NAV_ITEMS: {
   id: NavTab;
   label: string;
   icon: typeof ShoppingBag;
+  adminOnly?: boolean;
 }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'pos', label: 'POS Billing', icon: ShoppingBag },
@@ -105,6 +117,7 @@ const ADMIN_NAV_ITEMS: {
   { id: 'reports', label: 'Reports & Expenses', icon: BarChart3 },
   { id: 'printer', label: 'Printer & Sales', icon: Printer },
   { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'users', label: 'Users & Roles', icon: UserCog, adminOnly: true },
   ...(IS_DEBUG_MODE
     ? [{ id: 'dart' as NavTab, label: 'Flutter / Dart Source', icon: Code2 }]
     : []),
@@ -141,16 +154,26 @@ function loadSession(): StaffSession | null {
           : parsed.username === 'manager'
             ? 'manager'
             : 'user';
-    return {
-      username: parsed.username,
-      displayName: parsed.displayName || parsed.username,
-      roleKey,
-      role:
-        roleKey === 'admin'
+    const storedRole: StaffSession['role'] =
+      parsed.role === 'Admin' ||
+      parsed.role === 'Manager' ||
+      parsed.role === 'Cashier' ||
+      parsed.role === 'Sales Staff' ||
+      parsed.role === 'User (Limited Access)'
+        ? parsed.role
+        : roleKey === 'admin'
           ? 'Admin'
           : roleKey === 'manager'
             ? 'Manager'
-            : 'User (Limited Access)',
+            : roleKey === 'sales'
+              ? 'Sales Staff'
+              : 'Cashier';
+    return {
+      userId: typeof parsed.userId === 'number' ? parsed.userId : undefined,
+      username: parsed.username,
+      displayName: parsed.displayName || parsed.username,
+      roleKey,
+      role: storedRole,
       loggedInAt: parsed.loggedInAt || new Date().toISOString(),
     };
   } catch {
@@ -159,10 +182,12 @@ function loadSession(): StaffSession | null {
 }
 
 export default function App() {
+  const [users, setUsers] = useState<PharmacyUser[]>(() => loadUsers());
   const [session, setSession] = useState<StaffSession | null>(() =>
     loadSession(),
   );
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [usersFocusTick, setUsersFocusTick] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [items, setItems] = useState<PharmacyItem[]>(() => loadItems());
@@ -192,7 +217,49 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
+  const isAdminUser = session?.roleKey === 'admin';
   const isLimitedUser = !isManagerOrAdminRole(session?.roleKey);
+
+  // Keep active session synchronized if an Admin updates/disables the signed-in account
+  useEffect(() => {
+    if (!session) return;
+    const matched = users.find(
+      (u) =>
+        (session.userId !== undefined && u.id === session.userId) ||
+        u.username.toLowerCase() === session.username.toLowerCase(),
+    );
+    if (!matched || !matched.isActive) {
+      try {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+      } catch {
+        // Ignore storage errors
+      }
+      setSession(null);
+      return;
+    }
+    const nextRoleKey = toUserRoleKey(matched.role);
+    if (
+      session.roleKey !== nextRoleKey ||
+      session.role !== matched.role ||
+      session.displayName !== matched.name ||
+      session.username !== matched.username
+    ) {
+      const refreshed: StaffSession = {
+        ...session,
+        userId: matched.id,
+        username: matched.username,
+        displayName: matched.name,
+        role: matched.role,
+        roleKey: nextRoleKey,
+      };
+      setSession(refreshed);
+      try {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(refreshed));
+      } catch {
+        // Ignore storage errors
+      }
+    }
+  }, [users, session]);
 
   const handleLoginSuccess = (nextSession: StaffSession) => {
     try {
@@ -201,6 +268,11 @@ export default function App() {
       // Ignore storage errors
     }
     setSession(nextSession);
+    const syncedSettings = saveSettings({
+      ...settings,
+      activeRole: toCounterRole(nextSession.roleKey),
+    });
+    setSettings(syncedSettings);
     setActiveTab('dashboard');
   };
 
@@ -444,7 +516,7 @@ export default function App() {
   };
 
   const handleResetSettings = () => {
-    if (isLimitedUser) return;
+    if (!isAdminUser) return;
     const restored = resetSettingsToDefaults();
     setSettings(restored);
     setPrinterConfig({
@@ -453,6 +525,51 @@ export default function App() {
       paperWidth: toThermalWidth(restored.thermalPaperWidth),
       autoPrintOnSale: restored.autoPrintReceipt,
     });
+  };
+
+  const handleAddUser = (payload: {
+    name: string;
+    username: string;
+    role: PharmacyUserRole;
+    pinOrPassword: string;
+    isActive: boolean;
+  }) => {
+    if (!isAdminUser) {
+      throw new Error('Only an Admin can create staff users.');
+    }
+    const next = addPharmacyUser(users, payload);
+    setUsers(next);
+  };
+
+  const handleUpdateUser = (payload: {
+    id: number;
+    name: string;
+    username: string;
+    role: PharmacyUserRole;
+    pinOrPassword?: string;
+    isActive: boolean;
+  }) => {
+    if (!isAdminUser) {
+      throw new Error('Only an Admin can update staff users.');
+    }
+    const next = updatePharmacyUser(users, payload);
+    setUsers(next);
+  };
+
+  const handleToggleUserActive = (userId: number) => {
+    if (!isAdminUser) {
+      throw new Error('Only an Admin can toggle user status.');
+    }
+    const next = togglePharmacyUserActive(users, userId);
+    setUsers(next);
+  };
+
+  const handleDeleteUser = (userId: number) => {
+    if (!isAdminUser) {
+      throw new Error('Only an Admin can delete staff users.');
+    }
+    const next = deletePharmacyUser(users, userId, session?.username);
+    setUsers(next);
   };
 
   const handleAddExpense = (
@@ -482,7 +599,7 @@ export default function App() {
   };
 
   const handleResetDemo = () => {
-    if (isLimitedUser) return;
+    if (!isAdminUser) return;
     const restored = resetDemoDatabase();
     setItems(restored.items);
     setParties(restored.parties);
@@ -499,13 +616,20 @@ export default function App() {
     return (
       <LoginScreen
         theme={theme}
+        users={users}
+        pharmacyName={settings.pharmacyName}
+        pharmacyAddress={settings.address}
         onToggleTheme={toggleTheme}
         onLoginSuccess={handleLoginSuccess}
       />
     );
   }
 
-  const visibleNavItems = isLimitedUser ? USER_NAV_ITEMS : ADMIN_NAV_ITEMS;
+  const visibleNavItems = isLimitedUser
+    ? USER_NAV_ITEMS
+    : MANAGER_ADMIN_BASE_NAV_ITEMS.filter(
+        (item) => !item.adminOnly || isAdminUser,
+      );
   const resolvedActiveTab: NavTab = visibleNavItems.some(
     (n) => n.id === activeTab,
   )
@@ -541,6 +665,9 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   setActiveTab(item.id);
+                  if (item.id === 'users') {
+                    setUsersFocusTick((t) => t + 1);
+                  }
                   setMobileMenuOpen(false);
                 }}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
@@ -583,7 +710,7 @@ export default function App() {
             </>
           )}
         </button>
-        {!isLimitedUser && (
+        {isAdminUser && (
           <button
             type="button"
             onClick={handleResetDemo}
@@ -777,8 +904,10 @@ export default function App() {
                 isLimitedUser || !isManagerOrAdminRole(settings.activeRole)
               }
               hideCostAndProfit={
-                (isLimitedUser || !isManagerOrAdminRole(settings.activeRole)) &&
-                !settings.showProfitToStaff
+                isLimitedUser
+                  ? true
+                  : !isManagerOrAdminRole(settings.activeRole) &&
+                    !settings.showProfitToStaff
               }
               settings={settings}
               onCompleteSale={handleCompleteSale}
@@ -860,17 +989,29 @@ export default function App() {
             />
           )}
 
-          {!isLimitedUser && resolvedActiveTab === 'settings' && (
-            <SettingsWorkspace
-              settings={settings}
-              onSaveSettings={handleSaveSettings}
-              onResetSettings={handleResetSettings}
-              onExportBackup={exportDatabaseBackupJson}
-              itemCount={items.length}
-              saleCount={sales.length}
-              partyCount={parties.length}
-            />
-          )}
+          {!isLimitedUser &&
+            (resolvedActiveTab === 'settings' ||
+              resolvedActiveTab === 'users') && (
+              <SettingsWorkspace
+                settings={settings}
+                users={users}
+                isAdmin={isAdminUser}
+                currentSessionUsername={session.username}
+                focusUsersTick={
+                  resolvedActiveTab === 'users' ? usersFocusTick + 1 : 0
+                }
+                onSaveSettings={handleSaveSettings}
+                onResetSettings={handleResetSettings}
+                onExportBackup={exportDatabaseBackupJson}
+                onAddUser={handleAddUser}
+                onUpdateUser={handleUpdateUser}
+                onToggleUserActive={handleToggleUserActive}
+                onDeleteUser={handleDeleteUser}
+                itemCount={items.length}
+                saleCount={sales.length}
+                partyCount={parties.length}
+              />
+            )}
 
           {IS_DEBUG_MODE && !isLimitedUser && resolvedActiveTab === 'dart' && (
             <DartSourceWorkspace />

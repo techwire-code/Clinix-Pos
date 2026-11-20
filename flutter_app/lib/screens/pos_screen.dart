@@ -75,8 +75,13 @@ class _PosScreenState extends State<PosScreen>
 
   bool get _isManagerOrAdmin => _effectiveRole.canViewProfitAndCost;
 
-  bool get _canViewCostAndProfit =>
-      _isManagerOrAdmin || widget.settings.showProfitToStaff;
+  bool get _canViewCostAndProfit {
+    if (widget.currentUserRole != null &&
+        !widget.currentUserRole!.canViewProfitAndCost) {
+      return false;
+    }
+    return _isManagerOrAdmin || widget.settings.showProfitToStaff;
+  }
 
   @override
   void initState() {

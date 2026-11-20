@@ -2,6 +2,7 @@ import {
   ExpenseRecord,
   Party,
   PharmacyItem,
+  PharmacyUser,
   PrinterConfig,
   PurchaseRecord,
   SaleRecord,
@@ -686,4 +687,35 @@ export const SEED_EXPENSES: ExpenseRecord[] = [
     createdAt: '2026-10-28T11:00:00.000Z',
   },
 ];
+
+export const SEED_USERS: PharmacyUser[] = [
+  {
+    id: 1,
+    name: 'Dr. Khalid Minhas',
+    username: 'admin',
+    role: 'Admin',
+    pinOrPassword: '1234',
+    isActive: true,
+    createdAt: '2026-01-01T09:00:00.000Z',
+  },
+  {
+    id: 2,
+    name: 'Bilal Ahmad',
+    username: 'manager',
+    role: 'Manager',
+    pinOrPassword: '2222',
+    isActive: true,
+    createdAt: '2026-01-05T09:00:00.000Z',
+  },
+  {
+    id: 3,
+    name: 'Counter User',
+    username: 'user',
+    role: 'Cashier',
+    pinOrPassword: '1111',
+    isActive: true,
+    createdAt: '2026-01-10T09:00:00.000Z',
+  },
+];
+
 

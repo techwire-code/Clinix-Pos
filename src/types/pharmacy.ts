@@ -15,6 +15,18 @@ export type UserRole = 'admin' | 'manager' | 'cashier' | 'sales' | 'user';
 
 export type CounterRole = 'admin' | 'manager' | 'cashier' | 'sales';
 
+export type PharmacyUserRole = 'Admin' | 'Manager' | 'Cashier' | 'Sales Staff';
+
+export interface PharmacyUser {
+  id: number;
+  name: string;
+  username: string;
+  role: PharmacyUserRole;
+  pinOrPassword: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
 export type DecimalDigits = 0 | 2 | 3;
 
 export type SymbolPosition = 'prefix' | 'suffix';

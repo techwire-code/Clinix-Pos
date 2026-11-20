@@ -25,12 +25,15 @@ extension UserRoleX on UserRole {
   String get dbValue => name;
 
   static UserRole fromDb(String? value) {
-    switch (value) {
+    final normalized = value?.trim().toLowerCase() ?? '';
+    switch (normalized) {
       case 'manager':
         return UserRole.manager;
       case 'cashier':
         return UserRole.cashier;
-      case 'salesStaff':
+      case 'salesstaff':
+      case 'sales staff':
+      case 'sales':
         return UserRole.salesStaff;
       case 'admin':
       default:
@@ -898,3 +901,90 @@ class PharmacySettings {
   factory PharmacySettings.fromJson(Map<String, dynamic> json) =>
       PharmacySettings.fromMap(json);
 }
+
+class PharmacyUser {
+  final int? id;
+  final String name;
+  final String username;
+  final UserRole role;
+  final String pinOrPassword;
+  final bool isActive;
+  final String createdAt;
+
+  const PharmacyUser({
+    this.id,
+    required this.name,
+    required this.username,
+    required this.role,
+    required this.pinOrPassword,
+    this.isActive = true,
+    required this.createdAt,
+  });
+
+  PharmacyUser copyWith({
+    int? id,
+    String? name,
+    String? username,
+    UserRole? role,
+    String? pinOrPassword,
+    bool? isActive,
+    String? createdAt,
+  }) {
+    return PharmacyUser(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      username: username ?? this.username,
+      role: role ?? this.role,
+      pinOrPassword: pinOrPassword ?? this.pinOrPassword,
+      isActive: isActive ?? this.isActive,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'name': name,
+        'username': username,
+        'role': role.label,
+        'pin_or_password': pinOrPassword,
+        'is_active': isActive ? 1 : 0,
+        'created_at': createdAt,
+      };
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'username': username,
+        'role': role.label,
+        'pinOrPassword': pinOrPassword,
+        'isActive': isActive,
+        'createdAt': createdAt,
+      };
+
+  factory PharmacyUser.fromMap(Map<String, dynamic> map) {
+    final activeRaw = map['is_active'] ?? map['isActive'];
+    final active = activeRaw is bool
+        ? activeRaw
+        : activeRaw is num
+            ? activeRaw.toInt() == 1
+            : activeRaw?.toString() == '1' ||
+                activeRaw?.toString().toLowerCase() == 'true';
+
+    return PharmacyUser(
+      id: (map['id'] as num?)?.toInt(),
+      name: (map['name'] as String? ?? '').trim(),
+      username: (map['username'] as String? ?? '').trim(),
+      role: UserRoleX.fromDb(map['role'] as String?),
+      pinOrPassword:
+          (map['pin_or_password'] ?? map['pinOrPassword']) as String? ?? '',
+      isActive: activeRaw == null ? true : active,
+      createdAt:
+          (map['created_at'] ?? map['createdAt']) as String? ??
+              DateTime.now().toIso8601String(),
+    );
+  }
+
+  factory PharmacyUser.fromJson(Map<String, dynamic> json) =>
+      PharmacyUser.fromMap(json);
+}
+

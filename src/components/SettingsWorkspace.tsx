@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bluetooth,
@@ -6,12 +6,19 @@ import {
   Check,
   Coins,
   DatabaseBackup,
+  Edit3,
   Globe2,
+  Lock,
   Printer,
   RotateCcw,
   Save,
   Shield,
   SlidersHorizontal,
+  Trash2,
+  UserCheck,
+  UserCog,
+  UserPlus,
+  UserX,
   X,
 } from 'lucide-react';
 import {
@@ -19,10 +26,13 @@ import {
   DateFormatOption,
   DecimalDigits,
   PharmacySettings,
+  PharmacyUser,
+  PharmacyUserRole,
   SymbolPosition,
 } from '../types/pharmacy';
 import {
   COMMON_TIMEZONES,
+  countActiveAdmins,
   CURRENCY_PRESETS,
   formatDateBySettings,
   formatMoney,
@@ -31,9 +41,30 @@ import { generateTestEscPosReceipt } from '../services/escPosGenerator';
 
 interface SettingsWorkspaceProps {
   settings: PharmacySettings;
+  users: PharmacyUser[];
+  isAdmin: boolean;
+  currentSessionUsername: string;
+  focusUsersTick?: number;
   onSaveSettings: (next: PharmacySettings) => void;
   onResetSettings: () => void;
   onExportBackup: () => string;
+  onAddUser: (payload: {
+    name: string;
+    username: string;
+    role: PharmacyUserRole;
+    pinOrPassword: string;
+    isActive: boolean;
+  }) => void;
+  onUpdateUser: (payload: {
+    id: number;
+    name: string;
+    username: string;
+    role: PharmacyUserRole;
+    pinOrPassword?: string;
+    isActive: boolean;
+  }) => void;
+  onToggleUserActive: (userId: number) => void;
+  onDeleteUser: (userId: number) => void;
   itemCount: number;
   saleCount: number;
   partyCount: number;
@@ -73,11 +104,26 @@ const ROLE_OPTIONS: {
   },
 ];
 
+const USER_ROLE_CHOICES: PharmacyUserRole[] = [
+  'Admin',
+  'Manager',
+  'Cashier',
+  'Sales Staff',
+];
+
 export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   settings,
+  users,
+  isAdmin,
+  currentSessionUsername,
+  focusUsersTick = 0,
   onSaveSettings,
   onResetSettings,
   onExportBackup,
+  onAddUser,
+  onUpdateUser,
+  onToggleUserActive,
+  onDeleteUser,
   itemCount,
   saleCount,
   partyCount,
@@ -99,12 +145,34 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [testPrintLines, setTestPrintLines] = useState<string[] | null>(null);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
 
+  const usersSectionRef = useRef<HTMLElement>(null);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<PharmacyUser | null>(null);
+  const [userFormName, setUserFormName] = useState('');
+  const [userFormUsername, setUserFormUsername] = useState('');
+  const [userFormRole, setUserFormRole] =
+    useState<PharmacyUserRole>('Cashier');
+  const [userFormPin, setUserFormPin] = useState('');
+  const [userFormActive, setUserFormActive] = useState(true);
+  const [userFormError, setUserFormError] = useState<string | null>(null);
+  const [deleteConfirmUser, setDeleteConfirmUser] =
+    useState<PharmacyUser | null>(null);
+
   useEffect(() => {
     setDraft(settings);
     setLowStockInput(String(settings.lowStockThreshold));
     setExpiryAlertInput(String(settings.expiryAlertDays));
     setCustomTimezoneMode(!COMMON_TIMEZONES.includes(settings.timezone));
   }, [settings]);
+
+  useEffect(() => {
+    if (focusUsersTick > 0 && usersSectionRef.current) {
+      usersSectionRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }
+  }, [focusUsersTick]);
 
   const showNotice = (type: 'success' | 'info' | 'error', message: string) => {
     setStatusBanner({ type, message });
@@ -190,6 +258,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   };
 
   const handleExportDatabaseBackup = () => {
+    if (!isAdmin) {
+      showNotice(
+        'error',
+        'Admin permissions required to export full database backups.',
+      );
+      return;
+    }
     try {
       const jsonContent = onExportBackup();
       const blob = new Blob([jsonContent], {
@@ -206,7 +281,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       URL.revokeObjectURL(url);
       showNotice(
         'success',
-        `Database backup downloaded (${itemCount} SKUs, ${saleCount} receipts, ${partyCount} parties).`,
+        `Database backup downloaded (${users.length} users, ${itemCount} SKUs, ${saleCount} receipts, ${partyCount} parties).`,
       );
     } catch (err) {
       showNotice(
@@ -217,19 +292,156 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   };
 
   const handleConfirmResetSettings = () => {
+    if (!isAdmin) {
+      setConfirmResetOpen(false);
+      showNotice('error', 'Only an Admin can reset pharmacy settings.');
+      return;
+    }
     try {
       onResetSettings();
       setConfirmResetOpen(false);
       setTestPrintLines(null);
       showNotice(
         'success',
-        'Settings reset to defaults. Sales, stock, purchases, and Khata balances were preserved.',
+        'Settings reset to defaults. Staff users, sales, stock, purchases, and Khata balances were preserved.',
       );
     } catch (err) {
       showNotice(
         'error',
         `Failed to reset settings: ${err instanceof Error ? err.message : 'Unexpected error'}`,
       );
+    }
+  };
+
+  const activeAdminCount = countActiveAdmins(users);
+  const activeStaffCount = users.filter((u) => u.isActive).length;
+
+  const openAddUserModal = () => {
+    if (!isAdmin) {
+      showNotice('error', 'Only an Admin can add new staff accounts.');
+      return;
+    }
+    setEditingUser(null);
+    setUserFormName('');
+    setUserFormUsername('');
+    setUserFormRole('Cashier');
+    setUserFormPin('');
+    setUserFormActive(true);
+    setUserFormError(null);
+    setUserModalOpen(true);
+  };
+
+  const openEditUserModal = (user: PharmacyUser) => {
+    if (!isAdmin) {
+      showNotice('error', 'Only an Admin can edit staff accounts.');
+      return;
+    }
+    setEditingUser(user);
+    setUserFormName(user.name);
+    setUserFormUsername(user.username);
+    setUserFormRole(user.role);
+    setUserFormPin('');
+    setUserFormActive(user.isActive);
+    setUserFormError(null);
+    setUserModalOpen(true);
+  };
+
+  const handleSaveUserModal = () => {
+    setUserFormError(null);
+    try {
+      if (editingUser) {
+        onUpdateUser({
+          id: editingUser.id,
+          name: userFormName,
+          username: userFormUsername,
+          role: userFormRole,
+          pinOrPassword: userFormPin.trim() || undefined,
+          isActive: userFormActive,
+        });
+        showNotice(
+          'success',
+          `Updated staff account "${userFormName.trim()}" (${userFormRole}).`,
+        );
+      } else {
+        onAddUser({
+          name: userFormName,
+          username: userFormUsername,
+          role: userFormRole,
+          pinOrPassword: userFormPin,
+          isActive: userFormActive,
+        });
+        showNotice(
+          'success',
+          `Created staff account "${userFormName.trim()}" (${userFormRole}).`,
+        );
+      }
+      setUserModalOpen(false);
+    } catch (err) {
+      setUserFormError(
+        err instanceof Error ? err.message : 'Unable to save staff user.',
+      );
+    }
+  };
+
+  const handleInlineRoleChange = (
+    user: PharmacyUser,
+    nextRole: PharmacyUserRole,
+  ) => {
+    if (!isAdmin) {
+      showNotice('error', 'Only an Admin can change user roles.');
+      return;
+    }
+    try {
+      onUpdateUser({
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        role: nextRole,
+        isActive: user.isActive,
+      });
+      showNotice('success', `Changed ${user.name}'s role to ${nextRole}.`);
+    } catch (err) {
+      showNotice(
+        'error',
+        err instanceof Error ? err.message : 'Unable to change user role.',
+      );
+    }
+  };
+
+  const handleToggleUserStatus = (user: PharmacyUser) => {
+    if (!isAdmin) {
+      showNotice('error', 'Only an Admin can enable or disable users.');
+      return;
+    }
+    try {
+      onToggleUserActive(user.id);
+      showNotice(
+        'info',
+        `${user.name} is now ${user.isActive ? 'Disabled' : 'Active'}.`,
+      );
+    } catch (err) {
+      showNotice(
+        'error',
+        err instanceof Error ? err.message : 'Unable to toggle user status.',
+      );
+    }
+  };
+
+  const handleConfirmDeleteUser = () => {
+    if (!deleteConfirmUser) return;
+    try {
+      onDeleteUser(deleteConfirmUser.id);
+      showNotice(
+        'success',
+        `Removed user account "${deleteConfirmUser.name}" (@${deleteConfirmUser.username}).`,
+      );
+      setDeleteConfirmUser(null);
+    } catch (err) {
+      showNotice(
+        'error',
+        err instanceof Error ? err.message : 'Unable to delete user account.',
+      );
+      setDeleteConfirmUser(null);
     }
   };
 
@@ -1068,7 +1280,15 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-3 gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3 text-center dark:border-slate-800 dark:bg-slate-800/50">
+            <div className="mb-4 grid grid-cols-2 gap-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3 text-center dark:border-slate-800 dark:bg-slate-800/50 sm:grid-cols-4">
+              <div>
+                <p className="font-mono-tabular text-base font-bold text-slate-900 dark:text-slate-100">
+                  {activeStaffCount}/{users.length}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Active Users
+                </p>
+              </div>
               <div>
                 <p className="font-mono-tabular text-base font-bold text-slate-900 dark:text-slate-100">
                   {itemCount}
@@ -1095,6 +1315,15 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               </div>
             </div>
 
+            {!isAdmin && (
+              <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                <Lock className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Admin role required for full JSON database export and resetting pharmacy defaults.
+                </span>
+              </div>
+            )}
+
             <div className="space-y-3">
               <div className="flex flex-col justify-between gap-3 rounded-lg border border-slate-200 p-3.5 dark:border-slate-800 sm:flex-row sm:items-center">
                 <div>
@@ -1102,16 +1331,17 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     Export Backup
                   </p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Downloads a complete backup of settings, medicines, sales, purchases, expenses, and Khata ledger
+                    Downloads a complete backup of settings, staff users, medicines, sales, purchases, expenses, and Khata ledger
                   </p>
                 </div>
                 <button
                   type="button"
+                  disabled={!isAdmin}
                   onClick={handleExportDatabaseBackup}
-                  className="inline-flex min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white whitespace-nowrap transition-colors hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+                  className="inline-flex min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white whitespace-nowrap transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-700"
                 >
                   <DatabaseBackup className="h-4 w-4" />
-                  <span>Export Backup</span>
+                  <span>{isAdmin ? 'Export Backup' : 'Admin Only'}</span>
                 </button>
               </div>
 
@@ -1121,16 +1351,17 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     Reset Settings to Defaults
                   </p>
                   <p className="text-[11px] text-amber-800 dark:text-amber-300/90">
-                    Restores currency, pharmacy, printer, and counter preferences only. Never wipes products, sales, purchases, or parties.
+                    Restores currency, pharmacy, printer, and counter preferences only. Never wipes users, products, sales, purchases, or parties.
                   </p>
                 </div>
                 <button
                   type="button"
+                  disabled={!isAdmin}
                   onClick={() => setConfirmResetOpen(true)}
-                  className="inline-flex min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-900 whitespace-nowrap transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                  className="inline-flex min-h-[40px] shrink-0 items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-900 whitespace-nowrap transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-950/60"
                 >
                   <RotateCcw className="h-4 w-4" />
-                  <span>Reset Settings</span>
+                  <span>{isAdmin ? 'Reset Settings' : 'Admin Only'}</span>
                 </button>
               </div>
             </div>
@@ -1147,6 +1378,399 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           </div>
         </section>
       </div>
+
+      {/* 6. Users & Role Management (Full-width Admin Panel) */}
+      <section
+        id="users-management-section"
+        ref={usersSectionRef}
+        className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
+      >
+        <div className="mb-4 flex flex-col justify-between gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-center dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0D7A5F]/10 text-[#0D7A5F] dark:bg-emerald-950 dark:text-emerald-400">
+              <UserCog className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Users &amp; Role Management
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Manage pharmacy staff credentials and enforce Admin, Manager, Cashier, or Sales Staff permissions
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono-tabular text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              {activeStaffCount} Active · {activeAdminCount} Active Admin
+              {activeAdminCount === 1 ? '' : 's'}
+            </span>
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={openAddUserModal}
+                className="inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg bg-[#0D7A5F] px-3.5 py-2 text-xs font-semibold text-white whitespace-nowrap transition-colors hover:bg-[#0A634D]"
+              >
+                <UserPlus className="h-4 w-4" />
+                <span>Add User</span>
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                <Lock className="h-3.5 w-3.5" />
+                <span>View Only (Admin Required)</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[680px] border-collapse text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                <th className="py-2.5 pr-3">Staff Name</th>
+                <th className="px-3 py-2.5">Username</th>
+                <th className="px-3 py-2.5">Assigned Role</th>
+                <th className="px-3 py-2.5">Status</th>
+                <th className="py-2.5 pl-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {users.map((u) => {
+                const isCurrentUser =
+                  u.username.toLowerCase() ===
+                  currentSessionUsername.trim().toLowerCase();
+                const isLastActiveAdmin =
+                  u.role === 'Admin' && u.isActive && activeAdminCount <= 1;
+
+                return (
+                  <tr
+                    key={u.id}
+                    className={`transition-colors ${
+                      u.isActive
+                        ? 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'
+                        : 'bg-slate-50/60 opacity-75 dark:bg-slate-800/30'
+                    }`}
+                  >
+                    <td className="py-3 pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900 dark:text-slate-100">
+                          {u.name}
+                        </span>
+                        {isCurrentUser && (
+                          <span className="rounded bg-[#0D7A5F]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#0D7A5F] dark:bg-emerald-950 dark:text-emerald-400">
+                            You
+                          </span>
+                        )}
+                        {isLastActiveAdmin && (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/70 dark:text-amber-300">
+                            Protected Admin
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                        {u.role === 'Admin' || u.role === 'Manager'
+                          ? 'Cost & Net Profit visible on POS'
+                          : 'Cost, Net Profit & Admin tools hidden'}
+                      </p>
+                    </td>
+
+                    <td className="px-3 py-3 font-mono-tabular font-semibold text-slate-700 dark:text-slate-300">
+                      @{u.username}
+                    </td>
+
+                    <td className="px-3 py-3">
+                      {isAdmin ? (
+                        <select
+                          aria-label={`Role for ${u.name}`}
+                          value={u.role}
+                          disabled={isLastActiveAdmin}
+                          onChange={(e) =>
+                            handleInlineRoleChange(
+                              u,
+                              e.target.value as PharmacyUserRole,
+                            )
+                          }
+                          className="min-h-[34px] rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-900 focus:border-[#0D7A5F] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        >
+                          {USER_ROLE_CHOICES.map((roleOpt) => (
+                            <option key={roleOpt} value={roleOpt}>
+                              {roleOpt}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">
+                          {u.role}
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="px-3 py-3">
+                      <button
+                        type="button"
+                        disabled={!isAdmin || isLastActiveAdmin}
+                        onClick={() => handleToggleUserStatus(u)}
+                        title={
+                          isLastActiveAdmin
+                            ? 'Cannot disable the last active Admin account'
+                            : u.isActive
+                              ? 'Click to disable account'
+                              : 'Click to activate account'
+                        }
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                          u.isActive
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                            : 'border-slate-300 bg-slate-100 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                        }`}
+                      >
+                        {u.isActive ? (
+                          <>
+                            <UserCheck className="h-3.5 w-3.5" />
+                            <span>Active</span>
+                          </>
+                        ) : (
+                          <>
+                            <UserX className="h-3.5 w-3.5" />
+                            <span>Disabled</span>
+                          </>
+                        )}
+                      </button>
+                    </td>
+
+                    <td className="py-3 pl-3 text-right">
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={!isAdmin}
+                          onClick={() => openEditUserModal(u)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          <Edit3 className="h-3 w-3" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!isAdmin || isLastActiveAdmin || isCurrentUser}
+                          onClick={() => setDeleteConfirmUser(u)}
+                          title={
+                            isCurrentUser
+                              ? 'Cannot delete signed-in user'
+                              : isLastActiveAdmin
+                                ? 'Cannot delete the last active Admin'
+                                : 'Delete user account'
+                          }
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Add / Edit User Modal */}
+      {userModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 dark:bg-slate-950/75"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="user-modal-title"
+        >
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
+              <div>
+                <h4
+                  id="user-modal-title"
+                  className="text-base font-bold text-slate-900 dark:text-slate-100"
+                >
+                  {editingUser ? 'Edit Staff Account' : 'Add Staff Account'}
+                </h4>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  Assign role permissions and counter login PIN / password
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUserModalOpen(false)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                aria-label="Close user modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3.5">
+              {userFormError && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-300"
+                >
+                  {userFormError}
+                </div>
+              )}
+
+              <div>
+                <label
+                  htmlFor="user-form-name"
+                  className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                >
+                  Full Name *
+                </label>
+                <input
+                  id="user-form-name"
+                  type="text"
+                  value={userFormName}
+                  onChange={(e) => setUserFormName(e.target.value)}
+                  placeholder="e.g. Ayesha Siddiqui"
+                  className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="user-form-username"
+                    className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                  >
+                    Username *
+                  </label>
+                  <input
+                    id="user-form-username"
+                    type="text"
+                    value={userFormUsername}
+                    onChange={(e) => setUserFormUsername(e.target.value)}
+                    placeholder="e.g. cashier2"
+                    className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="user-form-role"
+                    className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                  >
+                    Role *
+                  </label>
+                  <select
+                    id="user-form-role"
+                    value={userFormRole}
+                    onChange={(e) =>
+                      setUserFormRole(e.target.value as PharmacyUserRole)
+                    }
+                    className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    {USER_ROLE_CHOICES.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="user-form-pin"
+                  className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                >
+                  {editingUser
+                    ? 'New PIN / Password (leave blank to keep current)'
+                    : 'PIN / Password (min 4 chars) *'}
+                </label>
+                <input
+                  id="user-form-pin"
+                  type="password"
+                  value={userFormPin}
+                  onChange={(e) => setUserFormPin(e.target.value)}
+                  placeholder={editingUser ? '•••• (unchanged)' : 'Enter 4+ char PIN'}
+                  className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-800/50">
+                <div>
+                  <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    Account Active
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Disabled users cannot sign in to POS billing
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={userFormActive}
+                  onChange={(e) => setUserFormActive(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-[#0D7A5F] focus:ring-[#0D7A5F] dark:border-slate-600 dark:bg-slate-800"
+                />
+              </label>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setUserModalOpen(false)}
+                className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveUserModal}
+                className="min-h-[40px] rounded-lg bg-[#0D7A5F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0A634D]"
+              >
+                {editingUser ? 'Save Changes' : 'Create User'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {deleteConfirmUser && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 dark:bg-slate-950/75"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-user-title"
+        >
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            <h4
+              id="delete-user-title"
+              className="text-base font-bold text-slate-900 dark:text-slate-100"
+            >
+              Remove Staff User?
+            </h4>
+            <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              Remove <strong>{deleteConfirmUser.name}</strong> (@
+              {deleteConfirmUser.username}, {deleteConfirmUser.role}) from
+              pharmacy login access? Past sales receipts created by this staff
+              member remain preserved.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmUser(null)}
+                className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteUser}
+                className="min-h-[40px] rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700"
+              >
+                Delete User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal for Safe Settings Reset */}
       {confirmResetOpen && (
@@ -1183,7 +1807,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               This will restore currency (PKR 0.00), timezone (Asia/Karachi), pharmacy details, thermal paper width (80mm), thresholds, and counter role back to defaults.
             </p>
             <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-              Safety guarantee: Your {itemCount} inventory medicines, {saleCount} sales receipts, and {partyCount} customer/supplier Khata balances will NOT be cleared or modified.
+              Safety guarantee: Your {users.length} staff user accounts, {itemCount} inventory medicines, {saleCount} sales receipts, and {partyCount} customer/supplier Khata balances will NOT be cleared or modified.
             </p>
 
             <div className="mt-5 flex justify-end gap-2">

@@ -18,7 +18,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
   static const String _dbName = 'clinix_pharmacy_pos.db';
-  static const int _dbVersion = 4;
+  static const int _dbVersion = 5;
   static const String _settingsPrefsKey = 'clinix_app_settings_v2';
 
   Database? _database;
@@ -189,6 +189,69 @@ class DatabaseHelper {
         );
       }
     }
+    if (oldVersion < 5) {
+      await _createUsersTable(db);
+      await _seedDefaultUsersIfEmpty(db);
+    }
+  }
+
+  Future<void> _createUsersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        username TEXT NOT NULL UNIQUE,
+        role TEXT NOT NULL DEFAULT 'Cashier',
+        pin_or_password TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)',
+    );
+  }
+
+  Future<void> _seedDefaultUsersIfEmpty(Database db) async {
+    final countResult = await db.rawQuery('SELECT COUNT(*) as cnt FROM users');
+    final count = (countResult.first['cnt'] as num?)?.toInt() ?? 0;
+    if (count > 0) return;
+
+    final nowIso = DateTime.now().toIso8601String();
+    final defaults = [
+      PharmacyUser(
+        name: 'Dr. Khalid Minhas',
+        username: 'admin',
+        role: UserRole.admin,
+        pinOrPassword: '1234',
+        isActive: true,
+        createdAt: nowIso,
+      ),
+      PharmacyUser(
+        name: 'Bilal Ahmad',
+        username: 'manager',
+        role: UserRole.manager,
+        pinOrPassword: '2222',
+        isActive: true,
+        createdAt: nowIso,
+      ),
+      PharmacyUser(
+        name: 'Counter User',
+        username: 'user',
+        role: UserRole.cashier,
+        pinOrPassword: '1111',
+        isActive: true,
+        createdAt: nowIso,
+      ),
+    ];
+
+    for (final user in defaults) {
+      await db.insert(
+        'users',
+        user.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -304,6 +367,10 @@ class DatabaseHelper {
       PharmacySettings.defaults().toMap(),
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
+
+    // 8. Staff Users & Roles Table
+    await _createUsersTable(db);
+    await _seedDefaultUsersIfEmpty(db);
 
     await _seedInitialData(db);
   }
@@ -947,8 +1014,8 @@ class DatabaseHelper {
     return defaults;
   }
 
-  /// Copies the active SQLite database file to a timestamped backup file
-  /// in the temporary directory so it can be shared or saved externally.
+  /// Copies the active SQLite database file (which includes `users`, `app_settings`,
+  /// `items`, `parties`, `sales`, and `purchases`) to a timestamped backup file.
   Future<String> exportDatabaseBackupFile() async {
     final db = await database;
     try {
@@ -968,5 +1035,236 @@ class DatabaseHelper {
     final backupPath = p.join(tempDir.path, 'clinix_pharmacy_backup_$stamp.db');
     await sourceFile.copy(backupPath);
     return backupPath;
+  }
+
+  /// Exports a JSON snapshot including settings, managed staff users, items, and parties.
+  Future<String> exportDatabaseBackupJson() async {
+    final settings = await getSettings();
+    final users = await getUsers();
+    final items = await getItems();
+    final parties = await getParties();
+    final sales = await getRecentSales(limit: 1000);
+    final purchases = await getRecentPurchases(limit: 1000);
+    final payload = <String, dynamic>{
+      'app': 'Clinix Community Pharmacy POS',
+      'schemaVersion': _dbVersion,
+      'exportedAt': DateTime.now().toIso8601String(),
+      'tables': {
+        'app_settings': settings.toJson(),
+        'users': users.map((u) => u.toJson()).toList(),
+        'items': items.map((i) => i.toMap()).toList(),
+        'parties': parties.map((p) => p.toMap()).toList(),
+        'sales': sales.map((s) => s.toMap()).toList(),
+        'purchases': purchases.map((p) => p.toMap()).toList(),
+      },
+    };
+    return const JsonEncoder.withIndent('  ').convert(payload);
+  }
+
+  // ==================== USERS & ROLE MANAGEMENT ====================
+
+  Future<List<PharmacyUser>> getUsers() async {
+    final db = await database;
+    await _createUsersTable(db);
+    await _seedDefaultUsersIfEmpty(db);
+    final rows = await db.query('users', orderBy: 'id ASC');
+    return rows.map(PharmacyUser.fromMap).toList();
+  }
+
+  Future<int> countActiveAdmins() async {
+    final users = await getUsers();
+    return users
+        .where((u) => u.role == UserRole.admin && u.isActive)
+        .length;
+  }
+
+  Future<PharmacyUser?> authenticateUser(
+    String usernameInput,
+    String pinOrPasswordInput,
+  ) async {
+    final users = await getUsers();
+    final cleanUser = usernameInput.trim().toLowerCase();
+    final cleanPin = pinOrPasswordInput.trim();
+    if (cleanUser.isEmpty || cleanPin.isEmpty) return null;
+
+    PharmacyUser? matched;
+    for (final u in users) {
+      if (u.username.trim().toLowerCase() == cleanUser) {
+        matched = u;
+        break;
+      }
+    }
+
+    if (matched == null &&
+        (cleanUser == 'cashier' || cleanUser == 'sales')) {
+      for (final u in users) {
+        if (u.username.trim().toLowerCase() == 'user') {
+          matched = u;
+          break;
+        }
+      }
+    }
+
+    if (matched == null || matched.pinOrPassword != cleanPin) {
+      return null;
+    }
+    if (!matched.isActive) {
+      throw StateError(
+        'Account "${matched.username}" is disabled. Contact an Admin.',
+      );
+    }
+    return matched;
+  }
+
+  Future<int> insertUser(PharmacyUser user) async {
+    final db = await database;
+    await _createUsersTable(db);
+    final cleanName = user.name.trim();
+    final cleanUsername = user.username.trim();
+    final cleanPin = user.pinOrPassword.trim();
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('Staff full name is required.');
+    }
+    if (cleanUsername.isEmpty || cleanUsername.contains(' ')) {
+      throw ArgumentError('Valid username without spaces is required.');
+    }
+    if (cleanPin.length < 4) {
+      throw ArgumentError('PIN / Password must be at least 4 characters.');
+    }
+
+    final existing = await db.query(
+      'users',
+      where: 'LOWER(username) = ?',
+      whereArgs: [cleanUsername.toLowerCase()],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      throw StateError('Username "$cleanUsername" already exists.');
+    }
+
+    return db.insert(
+      'users',
+      user
+          .copyWith(
+            name: cleanName,
+            username: cleanUsername,
+            pinOrPassword: cleanPin,
+          )
+          .toMap(),
+    );
+  }
+
+  Future<void> updateUser(PharmacyUser user) async {
+    if (user.id == null) {
+      throw ArgumentError('Cannot update PharmacyUser without an id.');
+    }
+    final db = await database;
+    await _createUsersTable(db);
+    final users = await getUsers();
+    final current = users.where((u) => u.id == user.id).toList();
+    if (current.isEmpty) {
+      throw StateError('User account not found.');
+    }
+    final existingUser = current.first;
+
+    final cleanName = user.name.trim();
+    final cleanUsername = user.username.trim();
+    final cleanPin = user.pinOrPassword.trim().isEmpty
+        ? existingUser.pinOrPassword
+        : user.pinOrPassword.trim();
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('Staff full name is required.');
+    }
+    if (cleanUsername.isEmpty || cleanUsername.contains(' ')) {
+      throw ArgumentError('Valid username without spaces is required.');
+    }
+    if (cleanPin.length < 4) {
+      throw ArgumentError('PIN / Password must be at least 4 characters.');
+    }
+
+    final duplicate = users.any(
+      (u) =>
+          u.id != user.id &&
+          u.username.toLowerCase() == cleanUsername.toLowerCase(),
+    );
+    if (duplicate) {
+      throw StateError('Username "$cleanUsername" is already in use.');
+    }
+
+    final activeAdmins =
+        users.where((u) => u.role == UserRole.admin && u.isActive).length;
+    final wasActiveAdmin =
+        existingUser.role == UserRole.admin && existingUser.isActive;
+    final staysActiveAdmin =
+        user.role == UserRole.admin && user.isActive;
+    if (wasActiveAdmin && !staysActiveAdmin && activeAdmins <= 1) {
+      throw StateError(
+        'Cannot demote or disable the last active Admin account.',
+      );
+    }
+
+    final values = user
+        .copyWith(
+          name: cleanName,
+          username: cleanUsername,
+          pinOrPassword: cleanPin,
+        )
+        .toMap()
+      ..remove('id');
+
+    await db.update(
+      'users',
+      values,
+      where: 'id = ?',
+      whereArgs: [user.id],
+    );
+  }
+
+  Future<void> toggleUserActive(int userId) async {
+    final users = await getUsers();
+    final matched = users.where((u) => u.id == userId).toList();
+    if (matched.isEmpty) {
+      throw StateError('User account not found.');
+    }
+    final target = matched.first;
+    final activeAdmins =
+        users.where((u) => u.role == UserRole.admin && u.isActive).length;
+    if (target.role == UserRole.admin &&
+        target.isActive &&
+        activeAdmins <= 1) {
+      throw StateError('Cannot disable the last active Admin account.');
+    }
+    final db = await database;
+    await db.update(
+      'users',
+      {'is_active': target.isActive ? 0 : 1},
+      where: 'id = ?',
+      whereArgs: [userId],
+    );
+  }
+
+  Future<void> deleteUser(int userId, {String? currentUsername}) async {
+    final users = await getUsers();
+    final matched = users.where((u) => u.id == userId).toList();
+    if (matched.isEmpty) {
+      throw StateError('User account not found.');
+    }
+    final target = matched.first;
+    if (currentUsername != null &&
+        target.username.toLowerCase() ==
+            currentUsername.trim().toLowerCase()) {
+      throw StateError('Cannot delete the currently signed-in account.');
+    }
+    final activeAdmins =
+        users.where((u) => u.role == UserRole.admin && u.isActive).length;
+    if (target.role == UserRole.admin &&
+        target.isActive &&
+        activeAdmins <= 1) {
+      throw StateError('Cannot delete the last active Admin account.');
+    }
+    final db = await database;
+    await db.delete('users', where: 'id = ?', whereArgs: [userId]);
   }
 }

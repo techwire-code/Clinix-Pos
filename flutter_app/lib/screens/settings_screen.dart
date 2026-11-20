@@ -16,12 +16,20 @@ class SettingsScreen extends StatefulWidget {
   final PharmacySettings initialSettings;
   final ValueChanged<PharmacySettings> onSettingsChanged;
   final VoidCallback? onOpenDrawer;
+  final UserRole currentUserRole;
+  final String? currentUsername;
+  final bool focusUsersSection;
+  final VoidCallback? onUsersChanged;
 
   const SettingsScreen({
     super.key,
     required this.initialSettings,
     required this.onSettingsChanged,
     this.onOpenDrawer,
+    this.currentUserRole = UserRole.admin,
+    this.currentUsername,
+    this.focusUsersSection = false,
+    this.onUsersChanged,
   });
 
   @override
@@ -58,11 +66,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _showProfitToStaff;
   late UserRole _activeUserRole;
 
+  final GlobalKey _usersSectionKey = GlobalKey();
+  List<PharmacyUser> _users = [];
+  bool _loadingUsers = true;
+
   List<BluetoothDevice> _pairedDevices = [];
   bool _loadingPrinters = false;
   bool _testingPrint = false;
   bool _saving = false;
   bool _exportingDb = false;
+
+  bool get _isAdmin => widget.currentUserRole == UserRole.admin;
 
   @override
   void initState() {
@@ -101,6 +115,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _activeUserRole = s.activeUserRole;
 
     _syncFromSqliteAndPrefs();
+    _loadUsers();
+    if (widget.focusUsersSection) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToUsersSection();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.focusUsersSection && widget.focusUsersSection) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToUsersSection();
+      });
+    }
+  }
+
+  void _scrollToUsersSection() {
+    final ctx = _usersSectionKey.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  Future<void> _loadUsers() async {
+    setState(() => _loadingUsers = true);
+    try {
+      final list = await DatabaseHelper.instance.getUsers();
+      if (!mounted) return;
+      setState(() {
+        _users = list;
+        _loadingUsers = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingUsers = false);
+      _showSnack('Unable to load users: $e', isError: true);
+    }
   }
 
   @override
@@ -351,6 +408,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _exportSqliteBackup() async {
+    if (!_isAdmin) {
+      _showSnack('Admin role required to export database backup.', isError: true);
+      return;
+    }
     setState(() => _exportingDb = true);
     try {
       final backupPath =
@@ -359,7 +420,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         [XFile(backupPath, mimeType: 'application/x-sqlite3')],
         subject: 'Clinix Pharmacy SQLite Database Backup',
         text:
-            'Offline SQLite backup of inventory, sales, purchases, Khata ledger, and settings.',
+            'Offline SQLite backup of users, settings, inventory, sales, purchases, and Khata ledger.',
       );
       _showSnack('SQLite backup ready to save or share.');
     } catch (e) {
@@ -370,12 +431,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _confirmResetDefaults() async {
+    if (!_isAdmin) {
+      _showSnack('Only an Admin can reset settings to defaults.', isError: true);
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Reset Settings to Defaults?'),
         content: const Text(
-          'This restores currency, regional formats, pharmacy identity, paper width, scanner preference, thresholds, and active role to Clinix defaults.\n\nYour sales history, stock inventory, purchases, and customer/supplier Khata ledger data will NOT be deleted.',
+          'This restores currency, regional formats, pharmacy identity, paper width, scanner preference, thresholds, and active role to Clinix defaults.\n\nYour staff user accounts, sales history, stock inventory, purchases, and customer/supplier Khata ledger data will NOT be deleted.',
         ),
         actions: [
           TextButton(
@@ -398,7 +463,249 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     setState(() => _applySettingsToState(defaults));
     widget.onSettingsChanged(defaults);
-    _showSnack('Settings reset to defaults. Sales, stock & ledger kept intact.');
+    _showSnack(
+      'Settings reset to defaults. Users, sales, stock & ledger kept intact.',
+    );
+  }
+
+  int get _activeAdminCount =>
+      _users.where((u) => u.role == UserRole.admin && u.isActive).length;
+
+  Future<void> _openUserDialog({PharmacyUser? existing}) async {
+    if (!_isAdmin) {
+      _showSnack('Only an Admin can manage user accounts.', isError: true);
+      return;
+    }
+
+    final nameCtrl = TextEditingController(text: existing?.name ?? '');
+    final usernameCtrl = TextEditingController(text: existing?.username ?? '');
+    final pinCtrl = TextEditingController();
+    UserRole selectedRole = existing?.role ?? UserRole.cashier;
+    bool isActive = existing?.isActive ?? true;
+    String? dialogError;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(existing == null ? 'Add Staff User' : 'Edit Staff User'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (dialogError != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    margin: const EdgeInsets.only(bottom: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Text(
+                      dialogError!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.red.shade800,
+                      ),
+                    ),
+                  ),
+                ],
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Full Name *',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: usernameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Username *',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<UserRole>(
+                  value: selectedRole,
+                  decoration: const InputDecoration(
+                    labelText: 'Role *',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: UserRole.values
+                      .map(
+                        (r) => DropdownMenuItem(
+                          value: r,
+                          child: Text(r.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) setDialogState(() => selectedRole = val);
+                  },
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: pinCtrl,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: existing == null
+                        ? 'PIN / Password (min 4 chars) *'
+                        : 'New PIN / Password (leave blank to keep)',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Account Active',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+                  ),
+                  value: isActive,
+                  onChanged: (val) => setDialogState(() => isActive = val),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF0D7A5F),
+              ),
+              onPressed: () async {
+                try {
+                  if (existing == null) {
+                    await DatabaseHelper.instance.insertUser(
+                      PharmacyUser(
+                        name: nameCtrl.text.trim(),
+                        username: usernameCtrl.text.trim(),
+                        role: selectedRole,
+                        pinOrPassword: pinCtrl.text.trim(),
+                        isActive: isActive,
+                        createdAt: DateTime.now().toIso8601String(),
+                      ),
+                    );
+                  } else {
+                    await DatabaseHelper.instance.updateUser(
+                      existing.copyWith(
+                        name: nameCtrl.text.trim(),
+                        username: usernameCtrl.text.trim(),
+                        role: selectedRole,
+                        pinOrPassword: pinCtrl.text.trim().isEmpty
+                            ? existing.pinOrPassword
+                            : pinCtrl.text.trim(),
+                        isActive: isActive,
+                      ),
+                    );
+                  }
+                  if (ctx.mounted) Navigator.of(ctx).pop(true);
+                } catch (e) {
+                  setDialogState(() {
+                    dialogError = e
+                        .toString()
+                        .replaceFirst('Bad state: ', '')
+                        .replaceFirst('Invalid argument(s): ', '');
+                  });
+                }
+              },
+              child: Text(existing == null ? 'Create User' : 'Save Changes'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    nameCtrl.dispose();
+    usernameCtrl.dispose();
+    pinCtrl.dispose();
+
+    if (saved == true) {
+      await _loadUsers();
+      widget.onUsersChanged?.call();
+      _showSnack(existing == null ? 'Staff user created.' : 'Staff user updated.');
+    }
+  }
+
+  Future<void> _changeUserRole(PharmacyUser user, UserRole nextRole) async {
+    if (!_isAdmin || user.id == null) return;
+    try {
+      await DatabaseHelper.instance.updateUser(user.copyWith(role: nextRole));
+      await _loadUsers();
+      widget.onUsersChanged?.call();
+      _showSnack('Updated ${user.name} role to ${nextRole.label}.');
+    } catch (e) {
+      _showSnack(
+        e.toString().replaceFirst('Bad state: ', ''),
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _toggleUserStatus(PharmacyUser user) async {
+    if (!_isAdmin || user.id == null) return;
+    try {
+      await DatabaseHelper.instance.toggleUserActive(user.id!);
+      await _loadUsers();
+      widget.onUsersChanged?.call();
+      _showSnack(
+        '${user.name} is now ${user.isActive ? 'Disabled' : 'Active'}.',
+      );
+    } catch (e) {
+      _showSnack(
+        e.toString().replaceFirst('Bad state: ', ''),
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _confirmDeleteUser(PharmacyUser user) async {
+    if (!_isAdmin || user.id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Staff User?'),
+        content: Text(
+          'Remove ${user.name} (@${user.username}, ${user.role.label}) from staff logins?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await DatabaseHelper.instance.deleteUser(
+        user.id!,
+        currentUsername: widget.currentUsername,
+      );
+      await _loadUsers();
+      widget.onUsersChanged?.call();
+      _showSnack('Removed user "${user.name}".');
+    } catch (e) {
+      _showSnack(
+        e.toString().replaceFirst('Bad state: ', ''),
+        isError: true,
+      );
+    }
   }
 
   void _showSnack(String msg, {bool isError = false}) {
@@ -983,17 +1290,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: 'Export your SQLite database or reset settings safely',
           ),
           _buildCard([
+            if (!_isAdmin) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.shade200),
+                ),
+                child: Text(
+                  'Admin role required for full database backup export and resetting pharmacy defaults.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.amber.shade900,
+                  ),
+                ),
+              ),
+            ],
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF0D7A5F),
                 ),
-                onPressed: _exportingDb ? null : _exportSqliteBackup,
+                onPressed: (!_isAdmin || _exportingDb)
+                    ? null
+                    : _exportSqliteBackup,
                 icon: const Icon(Icons.backup_outlined),
-                label: Text(_exportingDb
-                    ? 'Preparing SQLite Backup...'
-                    : 'Export / Backup SQLite Database'),
+                label: Text(!_isAdmin
+                    ? 'Export SQLite Backup (Admin Only)'
+                    : _exportingDb
+                        ? 'Preparing SQLite Backup...'
+                        : 'Export / Backup SQLite Database'),
               ),
             ),
             const SizedBox(height: 10),
@@ -1004,17 +1335,198 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   foregroundColor: Colors.red.shade700,
                   side: BorderSide(color: Colors.red.shade300),
                 ),
-                onPressed: _confirmResetDefaults,
+                onPressed: _isAdmin ? _confirmResetDefaults : null,
                 icon: const Icon(Icons.restart_alt),
-                label: const Text('Reset Settings to Defaults'),
+                label: Text(
+                  _isAdmin
+                      ? 'Reset Settings to Defaults'
+                      : 'Reset Settings (Admin Only)',
+                ),
               ),
             ),
             const SizedBox(height: 6),
             Text(
-              'Resetting settings never wipes your sales receipts, inventory stock, purchases, or customer/supplier Khata balances.',
+              'Resetting settings never wipes staff user accounts, sales receipts, inventory stock, purchases, or customer/supplier Khata balances.',
               style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
             ),
           ]),
+
+          const SizedBox(height: 18),
+
+          // 6. USERS & ROLE MANAGEMENT
+          KeyedSubtree(
+            key: _usersSectionKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildSectionHeader(
+                  icon: Icons.manage_accounts_outlined,
+                  title: '6. Users & Role Management',
+                  subtitle:
+                      'Add staff accounts and assign Admin, Manager, Cashier, or Sales Staff permissions',
+                ),
+                _buildCard([
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${_users.where((u) => u.isActive).length} Active · $_activeAdminCount Active Admin${_activeAdminCount == 1 ? '' : 's'}',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                      if (_isAdmin)
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF0D7A5F),
+                          ),
+                          onPressed: () => _openUserDialog(),
+                          icon: const Icon(Icons.person_add_alt_1, size: 18),
+                          label: const Text('Add User'),
+                        )
+                      else
+                        Text(
+                          'View Only (Admin Required)',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.amber.shade800,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (_loadingUsers)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else
+                    ..._users.map((u) {
+                      final isLastActiveAdmin = u.role == UserRole.admin &&
+                          u.isActive &&
+                          _activeAdminCount <= 1;
+                      final isCurrentUser = widget.currentUsername != null &&
+                          u.username.toLowerCase() ==
+                              widget.currentUsername!.trim().toLowerCase();
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: u.isActive
+                              ? Colors.grey.shade50
+                              : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${u.name}${isCurrentUser ? ' (You)' : ''}',
+                                        style: const TextStyle(
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      Text(
+                                        '@${u.username} · ${u.isActive ? 'Active' : 'Disabled'}${isLastActiveAdmin ? ' · Protected Admin' : ''}',
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Switch(
+                                  value: u.isActive,
+                                  onChanged: (!_isAdmin || isLastActiveAdmin)
+                                      ? null
+                                      : (_) => _toggleUserStatus(u),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: DropdownButtonFormField<UserRole>(
+                                    value: u.role,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Role',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                    items: UserRole.values
+                                        .map(
+                                          (r) => DropdownMenuItem(
+                                            value: r,
+                                            child: Text(r.label),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: (!_isAdmin || isLastActiveAdmin)
+                                        ? null
+                                        : (val) {
+                                            if (val != null && val != u.role) {
+                                              _changeUserRole(u, val);
+                                            }
+                                          },
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  tooltip: 'Edit User',
+                                  onPressed: _isAdmin
+                                      ? () => _openUserDialog(existing: u)
+                                      : null,
+                                  icon: const Icon(Icons.edit_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: isLastActiveAdmin
+                                      ? 'Cannot delete last active Admin'
+                                      : isCurrentUser
+                                          ? 'Cannot delete signed-in user'
+                                          : 'Delete User',
+                                  onPressed: (!_isAdmin ||
+                                          isLastActiveAdmin ||
+                                          isCurrentUser)
+                                      ? null
+                                      : () => _confirmDeleteUser(u),
+                                  icon: Icon(
+                                    Icons.delete_outline,
+                                    color: (!_isAdmin ||
+                                            isLastActiveAdmin ||
+                                            isCurrentUser)
+                                        ? Colors.grey.shade400
+                                        : Colors.red.shade700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                ]),
+              ],
+            ),
+          ),
 
           const SizedBox(height: 18),
 

@@ -5,9 +5,11 @@ import {
   SEED_PARTIES,
   SEED_PURCHASES,
   SEED_SALES,
+  SEED_USERS,
 } from '../data/seedData';
 import {
   CartLine,
+  CounterRole,
   CurrencyPreset,
   DateFormatOption,
   DecimalDigits,
@@ -16,6 +18,8 @@ import {
   PaymentMode,
   PharmacyItem,
   PharmacySettings,
+  PharmacyUser,
+  PharmacyUserRole,
   PrinterConfig,
   PurchaseDraftLine,
   PurchaseItemRecord,
@@ -24,6 +28,7 @@ import {
   SaleRecord,
   SymbolPosition,
   ThermalWidth,
+  UserRole,
 } from '../types/pharmacy';
 
 const STORAGE_KEYS = {
@@ -34,6 +39,7 @@ const STORAGE_KEYS = {
   expenses: 'clinix_pos_expenses_v1',
   printer: 'clinix_pos_printer_v1',
   settings: 'clinix_pos_settings_v1',
+  users: 'clinix_pos_users_v1',
   lowStockThreshold: 'clinix_low_stock_threshold_v1',
 };
 
@@ -621,17 +627,290 @@ export function saveSettings(next: PharmacySettings): PharmacySettings {
 }
 
 export function resetSettingsToDefaults(): PharmacySettings {
-  // Never wipes items, parties, sales, purchases, or expenses.
+  // Never wipes items, parties, sales, purchases, expenses, or users.
   return saveSettings({ ...DEFAULT_PHARMACY_SETTINGS });
+}
+
+export function normalizePharmacyUserRole(
+  rawRole: unknown,
+): PharmacyUserRole {
+  const val = String(rawRole ?? '')
+    .trim()
+    .toLowerCase();
+  if (val === 'admin') return 'Admin';
+  if (val === 'manager') return 'Manager';
+  if (val === 'sales staff' || val === 'salesstaff' || val === 'sales') {
+    return 'Sales Staff';
+  }
+  return 'Cashier';
+}
+
+export function toUserRoleKey(role: PharmacyUserRole): UserRole {
+  switch (role) {
+    case 'Admin':
+      return 'admin';
+    case 'Manager':
+      return 'manager';
+    case 'Sales Staff':
+      return 'sales';
+    case 'Cashier':
+    default:
+      return 'cashier';
+  }
+}
+
+export function toCounterRole(roleKey?: UserRole): CounterRole {
+  switch (roleKey) {
+    case 'admin':
+      return 'admin';
+    case 'manager':
+      return 'manager';
+    case 'sales':
+      return 'sales';
+    case 'cashier':
+    case 'user':
+    default:
+      return 'cashier';
+  }
+}
+
+export function countActiveAdmins(users: PharmacyUser[]): number {
+  return users.filter((u) => u.role === 'Admin' && u.isActive).length;
+}
+
+export function loadUsers(): PharmacyUser[] {
+  const existing = readStorage<Partial<PharmacyUser>[] | null>(
+    STORAGE_KEYS.users,
+    null,
+  );
+  if (existing && Array.isArray(existing) && existing.length > 0) {
+    const normalized: PharmacyUser[] = [];
+    const seenUsernames = new Set<string>();
+    let fallbackId = 1;
+    for (const raw of existing) {
+      if (!raw || typeof raw !== 'object') continue;
+      const username = String(raw.username ?? '').trim();
+      if (!username) continue;
+      const lower = username.toLowerCase();
+      if (seenUsernames.has(lower)) continue;
+      seenUsernames.add(lower);
+      const id =
+        typeof raw.id === 'number' && Number.isFinite(raw.id) && raw.id > 0
+          ? Math.floor(raw.id)
+          : fallbackId;
+      fallbackId = Math.max(fallbackId + 1, id + 1);
+      normalized.push({
+        id,
+        name: String(raw.name ?? '').trim() || username,
+        username,
+        role: normalizePharmacyUserRole(raw.role),
+        pinOrPassword: String(raw.pinOrPassword ?? '').trim() || '1234',
+        isActive:
+          typeof raw.isActive === 'boolean' ? raw.isActive : true,
+        createdAt:
+          typeof raw.createdAt === 'string' && raw.createdAt.trim()
+            ? raw.createdAt
+            : new Date().toISOString(),
+      });
+    }
+    if (normalized.length > 0) {
+      if (countActiveAdmins(normalized) === 0) {
+        const defaultAdmin = normalized.find(
+          (u) => u.username.toLowerCase() === 'admin',
+        );
+        if (defaultAdmin) {
+          defaultAdmin.role = 'Admin';
+          defaultAdmin.isActive = true;
+        } else {
+          normalized.unshift({
+            ...SEED_USERS[0],
+            id:
+              normalized.reduce((max, u) => Math.max(max, u.id), 0) + 1,
+          });
+        }
+        writeStorage(STORAGE_KEYS.users, normalized);
+      }
+      return normalized;
+    }
+  }
+  writeStorage(STORAGE_KEYS.users, SEED_USERS);
+  return SEED_USERS;
+}
+
+export function saveUsers(users: PharmacyUser[]): PharmacyUser[] {
+  if (countActiveAdmins(users) === 0) {
+    throw new Error('At least one active Admin account is required.');
+  }
+  writeStorage(STORAGE_KEYS.users, users);
+  return users;
+}
+
+export function addPharmacyUser(
+  currentUsers: PharmacyUser[],
+  payload: {
+    name: string;
+    username: string;
+    role: PharmacyUserRole;
+    pinOrPassword: string;
+    isActive?: boolean;
+  },
+): PharmacyUser[] {
+  const name = payload.name.trim();
+  const username = payload.username.trim();
+  const pinOrPassword = payload.pinOrPassword.trim();
+  if (!name) {
+    throw new Error('Staff full name is required.');
+  }
+  if (!username) {
+    throw new Error('Username / Staff ID is required.');
+  }
+  if (/\s/.test(username)) {
+    throw new Error('Username cannot contain spaces.');
+  }
+  if (pinOrPassword.length < 4) {
+    throw new Error('PIN / Password must be at least 4 characters.');
+  }
+  const duplicate = currentUsers.some(
+    (u) => u.username.toLowerCase() === username.toLowerCase(),
+  );
+  if (duplicate) {
+    throw new Error(`Username "${username}" already exists.`);
+  }
+  const nextId =
+    currentUsers.reduce((max, u) => Math.max(max, u.id), 0) + 1;
+  const created: PharmacyUser = {
+    id: nextId,
+    name,
+    username,
+    role: normalizePharmacyUserRole(payload.role),
+    pinOrPassword,
+    isActive: payload.isActive ?? true,
+    createdAt: new Date().toISOString(),
+  };
+  const next = [...currentUsers, created];
+  return saveUsers(next);
+}
+
+export function updatePharmacyUser(
+  currentUsers: PharmacyUser[],
+  payload: {
+    id: number;
+    name: string;
+    username: string;
+    role: PharmacyUserRole;
+    pinOrPassword?: string;
+    isActive: boolean;
+  },
+): PharmacyUser[] {
+  const existing = currentUsers.find((u) => u.id === payload.id);
+  if (!existing) {
+    throw new Error('User account not found.');
+  }
+  const name = payload.name.trim();
+  const username = payload.username.trim();
+  const nextRole = normalizePharmacyUserRole(payload.role);
+  const nextPin = (payload.pinOrPassword ?? '').trim() || existing.pinOrPassword;
+
+  if (!name) {
+    throw new Error('Staff full name is required.');
+  }
+  if (!username) {
+    throw new Error('Username / Staff ID is required.');
+  }
+  if (/\s/.test(username)) {
+    throw new Error('Username cannot contain spaces.');
+  }
+  if (nextPin.length < 4) {
+    throw new Error('PIN / Password must be at least 4 characters.');
+  }
+
+  const duplicate = currentUsers.some(
+    (u) =>
+      u.id !== payload.id &&
+      u.username.toLowerCase() === username.toLowerCase(),
+  );
+  if (duplicate) {
+    throw new Error(`Username "${username}" is already assigned to another staff member.`);
+  }
+
+  const wasActiveAdmin = existing.role === 'Admin' && existing.isActive;
+  const staysActiveAdmin = nextRole === 'Admin' && payload.isActive;
+  if (wasActiveAdmin && !staysActiveAdmin && countActiveAdmins(currentUsers) <= 1) {
+    throw new Error(
+      'Cannot demote or disable the last active Admin account.',
+    );
+  }
+
+  const next = currentUsers.map((u) =>
+    u.id === payload.id
+      ? {
+          ...u,
+          name,
+          username,
+          role: nextRole,
+          pinOrPassword: nextPin,
+          isActive: payload.isActive,
+        }
+      : u,
+  );
+  return saveUsers(next);
+}
+
+export function togglePharmacyUserActive(
+  currentUsers: PharmacyUser[],
+  userId: number,
+): PharmacyUser[] {
+  const target = currentUsers.find((u) => u.id === userId);
+  if (!target) {
+    throw new Error('User account not found.');
+  }
+  if (
+    target.role === 'Admin' &&
+    target.isActive &&
+    countActiveAdmins(currentUsers) <= 1
+  ) {
+    throw new Error('Cannot disable the last active Admin account.');
+  }
+  const next = currentUsers.map((u) =>
+    u.id === userId ? { ...u, isActive: !u.isActive } : u,
+  );
+  return saveUsers(next);
+}
+
+export function deletePharmacyUser(
+  currentUsers: PharmacyUser[],
+  userId: number,
+  currentSessionUsername?: string,
+): PharmacyUser[] {
+  const target = currentUsers.find((u) => u.id === userId);
+  if (!target) {
+    throw new Error('User account not found.');
+  }
+  if (
+    currentSessionUsername &&
+    target.username.toLowerCase() === currentSessionUsername.trim().toLowerCase()
+  ) {
+    throw new Error('Cannot delete the currently signed-in account.');
+  }
+  if (
+    target.role === 'Admin' &&
+    target.isActive &&
+    countActiveAdmins(currentUsers) <= 1
+  ) {
+    throw new Error('Cannot delete the last active Admin account.');
+  }
+  const next = currentUsers.filter((u) => u.id !== userId);
+  return saveUsers(next);
 }
 
 export function exportDatabaseBackupJson(): string {
   const payload = {
     app: 'Clinix Community Pharmacy POS',
-    schemaVersion: 3,
+    schemaVersion: 4,
     exportedAt: new Date().toISOString(),
     tables: {
       app_settings: loadSettings(),
+      users: loadUsers(),
       items: loadItems(),
       parties: loadParties(),
       sales: loadSales(),
