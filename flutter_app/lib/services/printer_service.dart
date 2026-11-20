@@ -1,10 +1,10 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
 
 enum ThermalPaperWidth { mm58, mm80 }
@@ -80,16 +80,29 @@ class PrinterService {
     required List<SaleItemRecord> items,
     String? overrideMacAddress,
     ThermalPaperWidth? overrideWidth,
+    PharmacySettings? settings,
   }) async {
-    final mac = overrideMacAddress ?? await getSavedPrinterMac();
+    final activeSettings =
+        settings ?? await DatabaseHelper.instance.getSettings();
+    final mac = overrideMacAddress ??
+        activeSettings.savedPrinterMac ??
+        await getSavedPrinterMac();
     if (mac == null || mac.isEmpty) {
       throw StateError(
-        'No default thermal printer configured. Open Printer Settings to pair and save a Bluetooth printer.',
+        'No default thermal printer configured. Open Printer Settings or Settings to pair and save a Bluetooth printer.',
       );
     }
 
-    final width = overrideWidth ?? await getSavedPaperWidth();
-    final bytes = buildEscPosReceipt(sale: sale, items: items, width: width);
+    final width = overrideWidth ??
+        (activeSettings.paperWidthMm == 58
+            ? ThermalPaperWidth.mm58
+            : await getSavedPaperWidth());
+    final bytes = buildEscPosReceipt(
+      sale: sale,
+      items: items,
+      width: width,
+      settings: activeSettings,
+    );
 
     BluetoothConnection? connection;
     try {
@@ -114,6 +127,7 @@ class PrinterService {
   Future<void> printTestPage({
     required String macAddress,
     required ThermalPaperWidth width,
+    PharmacySettings? settings,
   }) async {
     final demoSale = SaleRecord(
       invoiceNumber: 'TEST-0001',
@@ -121,8 +135,8 @@ class PrinterService {
       subtotal: 355.0,
       discountAmount: 20.0,
       netPayable: 335.0,
-      totalCost: 270.0,
-      netProfit: 65.0,
+      totalCost: 293.0,
+      netProfit: 42.0,
       paymentMode: PaymentMode.cash,
       createdAt: DateTime.now().toIso8601String(),
     );
@@ -154,6 +168,7 @@ class PrinterService {
       items: demoItems,
       overrideMacAddress: macAddress,
       overrideWidth: width,
+      settings: settings,
     );
   }
 
@@ -164,7 +179,10 @@ class PrinterService {
     required SaleRecord sale,
     required List<SaleItemRecord> items,
     ThermalPaperWidth width = ThermalPaperWidth.mm80,
+    PharmacySettings? settings,
   }) {
+    final cfg = settings ?? PharmacySettings.defaults();
+    final cur = cfg.currencyLabel.trim().isEmpty ? 'PKR' : cfg.currencyLabel.trim();
     final int cols = width.columnsPerLine;
     final List<int> buffer = [];
     final currency = NumberFormat('#,##0.00');
@@ -180,17 +198,27 @@ class PrinterService {
     buffer.addAll([0x1B, 0x61, 0x01]); // Center align
     buffer.addAll([0x1B, 0x45, 0x01]); // Bold ON
     buffer.addAll([0x1D, 0x21, 0x11]); // 2x width & height
-    buffer.addAll(_line('CLINIX'));
+    buffer.addAll(_line(cfg.pharmacyName.toUpperCase()));
     buffer.addAll([0x1D, 0x21, 0x00]); // Normal size
-    buffer.addAll(_line('CLINIX COMMUNITY PHARMACY'));
     buffer.addAll([0x1B, 0x45, 0x00]); // Bold OFF
-    buffer.addAll(_line('17 KM Ferozepur Road, Lahore'));
-    buffer.addAll(_line('Offline POS & Dispensing Receipt'));
+    if (cfg.branchAddress.trim().isNotEmpty) {
+      buffer.addAll(_line(cfg.branchAddress.trim()));
+    }
+    if (cfg.phoneNumber.trim().isNotEmpty) {
+      buffer.addAll(_line('Tel: ${cfg.phoneNumber.trim()}'));
+    }
+    if (cfg.licenseNumber.trim().isNotEmpty) {
+      buffer.addAll(_line('Lic: ${cfg.licenseNumber.trim()}'));
+    }
     buffer.addAll(_line('=' * cols));
 
     // Invoice metadata: Left aligned
     buffer.addAll([0x1B, 0x61, 0x00]); // Left align
     buffer.addAll(_line(_twoCol('Inv: ${sale.invoiceNumber}', sale.paymentMode.dbValue, cols)));
+    if (sale.transactionReference != null &&
+        sale.transactionReference!.isNotEmpty) {
+      buffer.addAll(_line('Ref: ${sale.transactionReference}'));
+    }
     buffer.addAll(_line('Date: $dateText'));
     buffer.addAll(_line('Party: ${sale.partyName}'));
     buffer.addAll(_line('-' * cols));
@@ -236,28 +264,41 @@ class PrinterService {
     buffer.addAll(_line('-' * cols));
 
     // Totals & Discounts
-    buffer.addAll(_line(_twoCol('Subtotal:', 'PKR ${currency.format(sale.subtotal)}', cols)));
+    buffer.addAll(_line(_twoCol('Subtotal:', '$cur ${currency.format(sale.subtotal)}', cols)));
     if (sale.discountAmount > 0) {
       buffer.addAll(_line(
-        _twoCol('Total Discount:', '-PKR ${currency.format(sale.discountAmount)}', cols),
+        _twoCol('Total Discount:', '-$cur ${currency.format(sale.discountAmount)}', cols),
       ));
     }
 
     buffer.addAll([0x1B, 0x45, 0x01]); // Bold ON
     buffer.addAll([0x1D, 0x21, 0x01]); // Double height
     buffer.addAll(_line(
-      _twoCol('NET PAYABLE:', 'PKR ${currency.format(sale.netPayable)}', cols),
+      _twoCol('NET PAYABLE:', '$cur ${currency.format(sale.netPayable)}', cols),
     ));
     buffer.addAll([0x1D, 0x21, 0x00]); // Normal height
     buffer.addAll([0x1B, 0x45, 0x00]); // Bold OFF
+
+    if (sale.cashReceived != null) {
+      buffer.addAll(_line(
+        _twoCol('Cash Received:', '$cur ${currency.format(sale.cashReceived!)}', cols),
+      ));
+      final change = sale.changeReturned ?? (sale.cashReceived! - sale.netPayable);
+      buffer.addAll(_line(
+        _twoCol('Balance / Change:', '$cur ${currency.format(change)}', cols),
+      ));
+    }
 
     buffer.addAll(_line('=' * cols));
 
     // Footer
     buffer.addAll([0x1B, 0x61, 0x01]); // Center align
-    buffer.addAll(_line('Medicines sold can be exchanged within'));
-    buffer.addAll(_line('7 days with original invoice & intact pack.'));
-    buffer.addAll(_line('Thank you for visiting Clinix Pharmacy!'));
+    if (cfg.receiptFooterNote.trim().isNotEmpty) {
+      for (final line in _wrapText(cfg.receiptFooterNote.trim(), cols)) {
+        buffer.addAll(_line(line));
+      }
+    }
+    buffer.addAll(_line('Thank you for visiting ${cfg.pharmacyName}!'));
 
     // Feed 4 lines & Partial Paper Cut: GS V 66 0
     buffer.addAll([0x1B, 0x64, 0x04]);
@@ -266,7 +307,20 @@ class PrinterService {
     return buffer;
   }
 
-  List<int> _line(String text) => [...latin1.encode(text), 0x0A];
+  List<int> _line(String text) {
+    final sanitized = text
+        .replaceAll('—', '-')
+        .replaceAll('–', '-')
+        .replaceAll('•', '*')
+        .replaceAll('’', "'")
+        .replaceAll('‘', "'")
+        .replaceAll('“', '"')
+        .replaceAll('”', '"');
+    final bytes = sanitized.codeUnits
+        .map((code) => (code >= 0x20 && code <= 0xFF) ? code : 0x3F)
+        .toList();
+    return [...bytes, 0x0A];
+  }
 
   String _truncate(String s, int max) =>
       s.length <= max ? s : '${s.substring(0, max - 1)}.';
@@ -283,5 +337,24 @@ class PrinterService {
       return '$left $right';
     }
     return '$left${' ' * space}$right';
+  }
+
+  List<String> _wrapText(String text, int maxWidth) {
+    final words = text.split(RegExp(r'\s+'));
+    final lines = <String>[];
+    var current = '';
+    for (final word in words) {
+      if (word.isEmpty) continue;
+      if (current.isEmpty) {
+        current = word;
+      } else if (current.length + 1 + word.length <= maxWidth) {
+        current = '$current $word';
+      } else {
+        lines.add(current);
+        current = word;
+      }
+    }
+    if (current.isNotEmpty) lines.add(current);
+    return lines;
   }
 }

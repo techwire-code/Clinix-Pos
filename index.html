@@ -21,8 +21,15 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&family=Public+Sans:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <script>
+      try {
+        if (localStorage.getItem('clinix_theme_preference_v1') === 'dark') {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    </script>
   </head>
-  <body class="bg-[#F8FAFC] text-[#0F172A] antialiased selection:bg-[#0D7A5F]/15 selection:text-[#0D7A5F]">
+  <body class="bg-[#F8FAFC] text-[#0F172A] antialiased transition-colors duration-150 selection:bg-[#0D7A5F]/15 selection:text-[#0D7A5F] dark:bg-[#0B1120] dark:text-[#F1F5F9] dark:selection:bg-[#34D399]/20 dark:selection:text-[#34D399]">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -1,6 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -13,7 +16,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
   static const String _dbName = 'clinix_pharmacy_pos.db';
-  static const int _dbVersion = 1;
+  static const int _dbVersion = 2;
 
   Database? _database;
 
@@ -24,7 +27,7 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }
@@ -39,7 +42,75 @@ class DatabaseHelper {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
+  }
+
+  Future<void> _createSettingsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS app_settings (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        pharmacy_name TEXT NOT NULL,
+        branch_address TEXT NOT NULL,
+        phone_number TEXT NOT NULL DEFAULT '',
+        license_number TEXT NOT NULL DEFAULT '',
+        receipt_footer_note TEXT NOT NULL DEFAULT '',
+        auto_print_receipt INTEGER NOT NULL DEFAULT 0,
+        saved_printer_name TEXT,
+        saved_printer_mac TEXT,
+        paper_width_mm INTEGER NOT NULL DEFAULT 80,
+        prefer_usb_scanner_focus INTEGER NOT NULL DEFAULT 1,
+        currency_label TEXT NOT NULL DEFAULT 'PKR',
+        low_stock_threshold INTEGER NOT NULL DEFAULT 10,
+        near_expiry_days INTEGER NOT NULL DEFAULT 60,
+        active_user_role TEXT NOT NULL DEFAULT 'admin',
+        updated_at TEXT NOT NULL
+      )
+    ''');
+
+    final columns = await db.rawQuery('PRAGMA table_info(app_settings)');
+    final existingNames =
+        columns.map((c) => c['name']?.toString()).whereType<String>().toSet();
+
+    const expectedColumns = <String, String>{
+      'pharmacy_name': "TEXT NOT NULL DEFAULT 'Clinix Community Pharmacy'",
+      'branch_address': "TEXT NOT NULL DEFAULT '17 KM Ferozepur Road, Lahore'",
+      'phone_number': "TEXT NOT NULL DEFAULT ''",
+      'license_number': "TEXT NOT NULL DEFAULT ''",
+      'receipt_footer_note': "TEXT NOT NULL DEFAULT ''",
+      'auto_print_receipt': 'INTEGER NOT NULL DEFAULT 0',
+      'saved_printer_name': 'TEXT',
+      'saved_printer_mac': 'TEXT',
+      'paper_width_mm': 'INTEGER NOT NULL DEFAULT 80',
+      'prefer_usb_scanner_focus': 'INTEGER NOT NULL DEFAULT 1',
+      'currency_label': "TEXT NOT NULL DEFAULT 'PKR'",
+      'low_stock_threshold': 'INTEGER NOT NULL DEFAULT 10',
+      'near_expiry_days': 'INTEGER NOT NULL DEFAULT 60',
+      'active_user_role': "TEXT NOT NULL DEFAULT 'admin'",
+      'updated_at': "TEXT NOT NULL DEFAULT ''",
+    };
+
+    for (final entry in expectedColumns.entries) {
+      if (!existingNames.contains(entry.key)) {
+        await db.execute(
+          'ALTER TABLE app_settings ADD COLUMN ${entry.key} ${entry.value}',
+        );
+      }
+    }
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await _createSettingsTable(db);
+      final existing = await db.query('app_settings', where: 'id = 1');
+      if (existing.isEmpty) {
+        await db.insert(
+          'app_settings',
+          PharmacySettings.defaults().toMap(),
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -87,6 +158,9 @@ class DatabaseHelper {
         total_cost REAL NOT NULL DEFAULT 0,
         net_profit REAL NOT NULL DEFAULT 0,
         payment_mode TEXT NOT NULL,
+        transaction_reference TEXT,
+        cash_received REAL,
+        change_returned REAL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE SET NULL
       )
@@ -142,6 +216,14 @@ class DatabaseHelper {
         FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
       )
     ''');
+
+    // 7. Pharmacy Settings Table
+    await _createSettingsTable(db);
+    await db.insert(
+      'app_settings',
+      PharmacySettings.defaults().toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
 
     await _seedInitialData(db);
   }
@@ -302,8 +384,8 @@ class DatabaseHelper {
     } else {
       rows = await db.query(
         'items',
-        where: 'name LIKE ? OR barcode LIKE ? OR category LIKE ?',
-        whereArgs: ['%$clean%', '%$clean%', '%$clean%'],
+        where: 'name LIKE ? OR barcode LIKE ? OR category LIKE ? OR batch_number LIKE ?',
+        whereArgs: ['%$clean%', '%$clean%', '%$clean%', '%$clean%'],
         orderBy: 'name ASC',
       );
     }
@@ -379,20 +461,21 @@ class DatabaseHelper {
   /// 2. Persists `sales` header with accurate net profit (subtracting ALL discounts).
   /// 3. Persists `sale_items` rows.
   /// 4. Deducts `stock_quantity` from `items`.
-  /// 5. If `paymentMode == PaymentMode.creditLedger`, adds `netPayable` to customer's `To Collect` balance.
+  /// 5. If `paymentMode == PaymentMode.creditKhata`, adds `netPayable` to customer's `To Collect` balance.
   Future<SaleRecord> completeSale({
     required List<CartLine> cartLines,
     required double billDiscount,
     required PaymentMode paymentMode,
     Party? party,
+    String? transactionReference,
+    double? cashReceived,
   }) async {
     if (cartLines.isEmpty) {
       throw StateError('Cannot complete sale with an empty cart.');
     }
-    if (paymentMode == PaymentMode.creditLedger &&
-        (party == null || party.id == null)) {
+    if (paymentMode.isCreditKhata && (party == null || party.id == null)) {
       throw StateError(
-          'Select a customer party when completing a Credit/Party Ledger sale.');
+          'Select a customer party when completing a Credit / Khata sale.');
     }
 
     final db = await database;
@@ -413,6 +496,10 @@ class DatabaseHelper {
 
     // Crucial business rule: net profit subtracts BOTH item-level and bill-level discounts.
     final double netProfit = netPayable - totalCost;
+    final double? changeReturned = cashReceived != null
+        ? double.parse((cashReceived - netPayable).toStringAsFixed(2))
+        : null;
+    final cleanRef = transactionReference?.trim();
 
     final saleHeader = SaleRecord(
       invoiceNumber: invoiceNo,
@@ -424,6 +511,10 @@ class DatabaseHelper {
       totalCost: totalCost,
       netProfit: netProfit,
       paymentMode: paymentMode,
+      transactionReference:
+          (cleanRef != null && cleanRef.isNotEmpty) ? cleanRef : null,
+      cashReceived: cashReceived,
+      changeReturned: changeReturned,
       createdAt: createdAt,
     );
 
@@ -479,8 +570,8 @@ class DatabaseHelper {
         await txn.insert('sale_items', saleItem.toMap(saleId));
       }
 
-      // 4. Update customer receivable balance for Credit/Party Ledger sales
-      if (paymentMode == PaymentMode.creditLedger && party?.id != null) {
+      // 4. Update customer receivable balance for Credit / Khata sales
+      if (paymentMode.isCreditKhata && party?.id != null) {
         await txn.rawUpdate(
           'UPDATE parties SET balance = balance + ? WHERE id = ?',
           [netPayable, party!.id],
@@ -501,6 +592,9 @@ class DatabaseHelper {
       totalCost: saleHeader.totalCost,
       netProfit: saleHeader.netProfit,
       paymentMode: saleHeader.paymentMode,
+      transactionReference: saleHeader.transactionReference,
+      cashReceived: saleHeader.cashReceived,
+      changeReturned: saleHeader.changeReturned,
       createdAt: saleHeader.createdAt,
     );
   }
@@ -672,5 +766,85 @@ class DatabaseHelper {
       whereArgs: [purchaseId],
     );
     return rows.map(PurchaseItemRecord.fromMap).toList();
+  }
+
+  // ==================== APP SETTINGS & BACKUP ====================
+
+  Future<PharmacySettings> getSettings() async {
+    final db = await database;
+    await _createSettingsTable(db);
+    final rows = await db.query(
+      'app_settings',
+      where: 'id = 1',
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      final defaults = PharmacySettings.defaults();
+      await db.insert(
+        'app_settings',
+        defaults.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      return defaults;
+    }
+    return PharmacySettings.fromMap(rows.first);
+  }
+
+  Future<PharmacySettings> saveSettings(PharmacySettings settings) async {
+    final db = await database;
+    await _createSettingsTable(db);
+    final payload = settings.toMap();
+    final existing = await db.query(
+      'app_settings',
+      columns: ['id'],
+      where: 'id = 1',
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await db.insert(
+        'app_settings',
+        payload,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      final updateValues = Map<String, dynamic>.from(payload)..remove('id');
+      await db.update(
+        'app_settings',
+        updateValues,
+        where: 'id = 1',
+      );
+    }
+    return settings;
+  }
+
+  /// Resets only the `app_settings` row (id = 1) back to factory defaults.
+  /// Never touches items, parties, sales, or purchases tables.
+  Future<PharmacySettings> resetSettingsToDefaults() async {
+    final defaults = PharmacySettings.defaults();
+    await saveSettings(defaults);
+    return defaults;
+  }
+
+  /// Copies the active SQLite database file to a timestamped backup file
+  /// in the temporary directory so it can be shared or saved externally.
+  Future<String> exportDatabaseBackupFile() async {
+    final db = await database;
+    try {
+      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (_) {
+      // Ignore if journal mode is not WAL
+    }
+
+    final dbPath = await getDatabasesPath();
+    final sourceFile = File(p.join(dbPath, _dbName));
+    if (!await sourceFile.exists()) {
+      throw StateError('SQLite database file not found at ${sourceFile.path}');
+    }
+
+    final tempDir = await getTemporaryDirectory();
+    final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+    final backupPath = p.join(tempDir.path, 'clinix_pharmacy_backup_$stamp.db');
+    await sourceFile.copy(backupPath);
+    return backupPath;
   }
 }

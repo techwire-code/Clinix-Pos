@@ -22,10 +22,12 @@ import {
   ThermalWidth,
 } from '../types/pharmacy';
 import { downloadA5InvoicePdf, shareInvoiceSummary } from '../services/a5PdfGenerator';
+import { ThemeMode } from '../services/themeService';
 
 interface PrinterAndSalesWorkspaceProps {
   sales: SaleRecord[];
   printerConfig: PrinterConfig;
+  theme?: ThemeMode;
   onUpdatePrinterConfig: (next: PrinterConfig) => void;
   onOpenInvoiceModal: (sale: SaleRecord) => void;
 }
@@ -41,9 +43,11 @@ export const PrinterAndSalesWorkspace: React.FC<
 > = ({
   sales,
   printerConfig,
+  theme = 'light',
   onUpdatePrinterConfig,
   onOpenInvoiceModal,
 }) => {
+  const isDark = theme === 'dark';
   const [isScanning, setIsScanning] = useState(false);
   const [btStatus, setBtStatus] = useState<string | null>(null);
   const [devices, setDevices] = useState(SIMULATED_BLUETOOTH_DEVICES);
@@ -226,41 +230,41 @@ export const PrinterAndSalesWorkspace: React.FC<
       {/* Daily Dashboard Summary Card */}
       <section
         aria-labelledby="daily-summary-heading"
-        className="rounded-xl border border-slate-200 bg-white"
+        className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3.5 dark:border-slate-800">
           <h2
             id="daily-summary-heading"
-            className="text-sm font-semibold text-slate-900"
+            className="text-sm font-semibold text-slate-900 dark:text-slate-100"
           >
             Daily Sales Summary
           </h2>
-          <p className="font-mono-tabular text-xs text-slate-500">
+          <p className="font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
             {dailySummary.formattedDate} · Current Day Totals
           </p>
         </div>
 
-        <div className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0 dark:divide-slate-800">
           <div className="p-5">
-            <p className="text-xs font-medium text-slate-500">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Total Daily Revenue
             </p>
-            <p className="mt-1.5 font-mono-tabular text-2xl font-bold text-[#0D7A5F]">
+            <p className="mt-1.5 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
               PKR {dailySummary.dailyRevenue.toFixed(2)}
             </p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Net billed amount today
             </p>
           </div>
 
           <div className="p-5">
-            <p className="text-xs font-medium text-slate-500">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Total Transactions
             </p>
-            <p className="mt-1.5 font-mono-tabular text-2xl font-bold text-slate-900">
+            <p className="mt-1.5 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
               {dailySummary.transactionCount}
             </p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {dailySummary.transactionCount === 1
                 ? 'Completed sale today'
                 : 'Completed sales today'}
@@ -268,28 +272,28 @@ export const PrinterAndSalesWorkspace: React.FC<
           </div>
 
           <div className="p-5">
-            <p className="text-xs font-medium text-slate-500">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Most Sold Item Today
             </p>
             {dailySummary.mostSoldName ? (
               <>
                 <p
-                  className="mt-1.5 truncate text-base font-bold text-slate-900"
+                  className="mt-1.5 truncate text-base font-bold text-slate-900 dark:text-slate-100"
                   title={dailySummary.mostSoldName}
                 >
                   {dailySummary.mostSoldName}
                 </p>
-                <p className="mt-1 font-mono-tabular text-xs font-medium text-slate-600">
+                <p className="mt-1 font-mono-tabular text-xs font-medium text-slate-600 dark:text-slate-400">
                   {dailySummary.mostSoldQty}{' '}
                   {dailySummary.mostSoldQty === 1 ? 'unit' : 'units'} dispensed
                 </p>
               </>
             ) : (
               <>
-                <p className="mt-1.5 text-base font-semibold text-slate-500">
+                <p className="mt-1.5 text-base font-semibold text-slate-500 dark:text-slate-400">
                   No sales yet
                 </p>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
                   Complete a POS bill to track top mover
                 </p>
               </>
@@ -300,36 +304,36 @@ export const PrinterAndSalesWorkspace: React.FC<
 
       {/* All-Time Profit & Sales Summary Strip */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Net Sales Collected
           </p>
-          <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900">
+          <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
             PKR {totals.grossSales.toFixed(2)}
           </p>
-          <p className="mt-0.5 font-mono-tabular text-xs text-slate-500">
+          <p className="mt-0.5 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
             {sales.length} completed invoices
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Discounts Granted
           </p>
-          <p className="mt-1 font-mono-tabular text-2xl font-bold text-amber-700">
+          <p className="mt-1 font-mono-tabular text-2xl font-bold text-amber-700 dark:text-amber-400">
             PKR {totals.totalDiscounts.toFixed(2)}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             Deducted from gross margin
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Actual Net Profit
           </p>
-          <p className="mt-1 font-mono-tabular text-2xl font-bold text-[#0D7A5F]">
+          <p className="mt-1 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
             PKR {totals.totalProfit.toFixed(2)}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             After subtracting cost & discounts
           </p>
         </div>
@@ -338,33 +342,40 @@ export const PrinterAndSalesWorkspace: React.FC<
       {/* 7-Day Daily Profit Trend Chart */}
       <section
         aria-labelledby="profit-trend-heading"
-        className="rounded-xl border border-slate-200 bg-white p-5"
+        className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
       >
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4 dark:border-slate-800">
           <div>
             <h2
               id="profit-trend-heading"
-              className="text-base font-semibold text-slate-900"
+              className="text-base font-semibold text-slate-900 dark:text-slate-100"
             >
               7-Day Daily Net Profit Trend
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Daily net profit after cost of goods and all item/bill discounts
             </p>
           </div>
           <div className="flex items-center gap-4 text-xs">
             <div>
-              <span className="text-slate-500">7-Day Total: </span>
-              <span className="font-mono-tabular font-semibold text-[#0D7A5F]">
+              <span className="text-slate-500 dark:text-slate-400">
+                7-Day Total:{' '}
+              </span>
+              <span className="font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
                 PKR {sevenDayProfitData.total7DayProfit.toFixed(2)}
               </span>
             </div>
-            <span className="text-slate-300" aria-hidden="true">
+            <span
+              className="text-slate-300 dark:text-slate-700"
+              aria-hidden="true"
+            >
               ·
             </span>
             <div>
-              <span className="text-slate-500">Daily Avg: </span>
-              <span className="font-mono-tabular font-semibold text-slate-900">
+              <span className="text-slate-500 dark:text-slate-400">
+                Daily Avg:{' '}
+              </span>
+              <span className="font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                 PKR {sevenDayProfitData.avgDailyProfit.toFixed(2)}
               </span>
             </div>
@@ -379,23 +390,31 @@ export const PrinterAndSalesWorkspace: React.FC<
             >
               <defs>
                 <linearGradient id="clinixProfitFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0D7A5F" stopOpacity={0.22} />
-                  <stop offset="95%" stopColor="#0D7A5F" stopOpacity={0.0} />
+                  <stop
+                    offset="5%"
+                    stopColor={isDark ? '#34D399' : '#0D7A5F'}
+                    stopOpacity={0.25}
+                  />
+                  <stop
+                    offset="95%"
+                    stopColor={isDark ? '#34D399' : '#0D7A5F'}
+                    stopOpacity={0.0}
+                  />
                 </linearGradient>
               </defs>
               <CartesianGrid
                 strokeDasharray="3 3"
                 vertical={false}
-                stroke="#E2E8F0"
+                stroke={isDark ? '#1E293B' : '#E2E8F0'}
               />
               <XAxis
                 dataKey="label"
-                tick={{ fontSize: 11, fill: '#64748B' }}
-                axisLine={{ stroke: '#E2E8F0' }}
+                tick={{ fontSize: 11, fill: isDark ? '#94A3B8' : '#64748B' }}
+                axisLine={{ stroke: isDark ? '#334155' : '#E2E8F0' }}
                 tickLine={false}
               />
               <YAxis
-                tick={{ fontSize: 11, fill: '#64748B' }}
+                tick={{ fontSize: 11, fill: isDark ? '#94A3B8' : '#64748B' }}
                 axisLine={false}
                 tickLine={false}
                 width={62}
@@ -411,17 +430,17 @@ export const PrinterAndSalesWorkspace: React.FC<
                     transactions: number;
                   };
                   return (
-                    <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs shadow-sm">
-                      <p className="font-semibold text-slate-900">
+                    <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                      <p className="font-semibold text-slate-900 dark:text-slate-100">
                         {point.label}
                       </p>
-                      <p className="mt-1 font-mono-tabular font-semibold text-[#0D7A5F]">
+                      <p className="mt-1 font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
                         Net Profit: PKR {point.netProfit.toFixed(2)}
                       </p>
-                      <p className="mt-0.5 font-mono-tabular text-slate-600">
+                      <p className="mt-0.5 font-mono-tabular text-slate-600 dark:text-slate-300">
                         Revenue: PKR {point.revenue.toFixed(2)}
                       </p>
-                      <p className="mt-0.5 font-mono-tabular text-slate-500">
+                      <p className="mt-0.5 font-mono-tabular text-slate-500 dark:text-slate-400">
                         {point.transactions}{' '}
                         {point.transactions === 1 ? 'invoice' : 'invoices'}
                       </p>
@@ -432,11 +451,16 @@ export const PrinterAndSalesWorkspace: React.FC<
               <Area
                 type="monotone"
                 dataKey="netProfit"
-                stroke="#0D7A5F"
+                stroke={isDark ? '#34D399' : '#0D7A5F'}
                 strokeWidth={2.25}
                 fillOpacity={1}
                 fill="url(#clinixProfitFill)"
-                activeDot={{ r: 5, fill: '#0D7A5F', stroke: '#FFFFFF', strokeWidth: 2 }}
+                activeDot={{
+                  r: 5,
+                  fill: isDark ? '#34D399' : '#0D7A5F',
+                  stroke: isDark ? '#0F172A' : '#FFFFFF',
+                  strokeWidth: 2,
+                }}
               />
             </AreaChart>
           </ResponsiveContainer>
@@ -446,19 +470,19 @@ export const PrinterAndSalesWorkspace: React.FC<
       {/* Main Split: Sales Ledger + Thermal Bluetooth Config */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
         {/* Sales & A5 PDF Invoices Table */}
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white xl:col-span-7">
-          <div className="border-b border-slate-200 px-5 py-4">
-            <h2 className="text-base font-semibold text-slate-900">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white xl:col-span-7 dark:border-slate-800 dark:bg-slate-900">
+          <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               Completed Invoices & Profit Audit
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Preview 58mm/80mm ESC/POS receipts, download A5 PDFs, or share via
               WhatsApp.
             </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600">
+              <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
                   <th className="px-4 py-3">Invoice</th>
                   <th className="px-4 py-3">Party / Mode</th>
@@ -467,33 +491,36 @@ export const PrinterAndSalesWorkspace: React.FC<
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {sales.map((sale) => (
-                  <tr key={sale.id} className="hover:bg-slate-50/70">
+                  <tr
+                    key={sale.id}
+                    className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
+                  >
                     <td className="px-4 py-3">
-                      <p className="font-mono-tabular font-semibold text-slate-900">
+                      <p className="font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                         {sale.invoiceNumber}
                       </p>
-                      <p className="text-[11px] text-slate-500">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
                         {new Date(sale.createdAt).toLocaleDateString('en-PK')}
                       </p>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">
+                      <p className="font-medium text-slate-900 dark:text-slate-100">
                         {sale.partyName}
                       </p>
-                      <p className="text-[11px] text-slate-500">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
                         {sale.paymentMode} · Disc -{sale.discountAmount.toFixed(0)}
                       </p>
                     </td>
-                    <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900">
+                    <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                       PKR {sale.netPayable.toFixed(2)}
                     </td>
                     <td
                       className={`px-4 py-3 text-right font-mono-tabular font-semibold ${
                         sale.netProfit >= 0
-                          ? 'text-emerald-700'
-                          : 'text-red-700'
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-red-700 dark:text-red-400'
                       }`}
                     >
                       PKR {sale.netProfit.toFixed(2)}
@@ -504,7 +531,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                           type="button"
                           onClick={() => onOpenInvoiceModal(sale)}
                           title="Thermal Receipt & ESC/POS"
-                          className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100"
+                          className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                           <Printer className="h-3.5 w-3.5" />
                         </button>
@@ -512,7 +539,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                           type="button"
                           onClick={() => downloadA5InvoicePdf(sale)}
                           title="Download A5 PDF"
-                          className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100"
+                          className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                           <Download className="h-3.5 w-3.5" />
                         </button>
@@ -520,7 +547,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                           type="button"
                           onClick={() => void shareInvoiceSummary(sale)}
                           title="Share via WhatsApp / Email"
-                          className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100"
+                          className="rounded border border-slate-200 p-1.5 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                           <Share2 className="h-3.5 w-3.5" />
                         </button>
@@ -534,13 +561,13 @@ export const PrinterAndSalesWorkspace: React.FC<
         </div>
 
         {/* Thermal Bluetooth Printer Configurator */}
-        <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 xl:col-span-5">
-          <div className="flex items-start justify-between gap-2 border-b border-slate-200 pb-3">
+        <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 xl:col-span-5 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-start justify-between gap-2 border-b border-slate-200 pb-3 dark:border-slate-800">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 Bluetooth Thermal Printer
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 ESC/POS MAC persistence & paper width settings
               </p>
             </div>
@@ -556,27 +583,33 @@ export const PrinterAndSalesWorkspace: React.FC<
           </div>
 
           {btStatus && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-300">
               {btStatus}
             </div>
           )}
 
-          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs">
+          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs dark:border-slate-800 dark:bg-slate-800/50">
             <div className="flex items-center justify-between">
-              <span className="text-slate-500">Default Printer</span>
-              <span className="font-semibold text-slate-900">
+              <span className="text-slate-500 dark:text-slate-400">
+                Default Printer
+              </span>
+              <span className="font-semibold text-slate-900 dark:text-slate-100">
                 {printerConfig.deviceName}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-500">Saved MAC Address</span>
-              <span className="font-mono-tabular font-semibold text-[#0D7A5F]">
+              <span className="text-slate-500 dark:text-slate-400">
+                Saved MAC Address
+              </span>
+              <span className="font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
                 {printerConfig.macAddress}
               </span>
             </div>
             <div className="flex items-center justify-between pt-1">
-              <span className="text-slate-500">Thermal Roll Width</span>
-              <div className="flex items-center gap-1 rounded-lg bg-slate-200/70 p-0.5">
+              <span className="text-slate-500 dark:text-slate-400">
+                Thermal Roll Width
+              </span>
+              <div className="flex items-center gap-1 rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-800">
                 {(['58mm', '80mm'] as ThermalWidth[]).map((w) => (
                   <button
                     key={w}
@@ -586,8 +619,8 @@ export const PrinterAndSalesWorkspace: React.FC<
                     }
                     className={`rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap ${
                       printerConfig.paperWidth === w
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600'
+                        ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                        : 'text-slate-600 dark:text-slate-400'
                     }`}
                   >
                     {w} ({w === '58mm' ? '32 col' : '48 col'})
@@ -598,10 +631,10 @@ export const PrinterAndSalesWorkspace: React.FC<
           </div>
 
           <div>
-            <p className="mb-2 text-xs font-semibold text-slate-700">
+            <p className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
               Paired & Discovered Printers
             </p>
-            <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+            <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
               {devices.map((d) => {
                 const isDefault = d.mac === printerConfig.macAddress;
                 return (
@@ -610,13 +643,15 @@ export const PrinterAndSalesWorkspace: React.FC<
                     className="flex items-center justify-between px-3 py-2.5 text-xs"
                   >
                     <div>
-                      <p className="font-medium text-slate-900">{d.name}</p>
-                      <p className="font-mono-tabular text-[11px] text-slate-500">
+                      <p className="font-medium text-slate-900 dark:text-slate-100">
+                        {d.name}
+                      </p>
+                      <p className="font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
                         {d.mac} · Signal {d.rssi} dBm
                       </p>
                     </div>
                     {isDefault ? (
-                      <span className="inline-flex items-center gap-1 font-semibold text-[#0D7A5F]">
+                      <span className="inline-flex items-center gap-1 font-semibold text-[#0D7A5F] dark:text-emerald-400">
                         <Check className="h-3.5 w-3.5" />
                         Default
                       </span>
@@ -624,7 +659,7 @@ export const PrinterAndSalesWorkspace: React.FC<
                       <button
                         type="button"
                         onClick={() => handleSaveDevice(d.name, d.mac)}
-                        className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                       >
                         Set Default
                       </button>
@@ -639,7 +674,7 @@ export const PrinterAndSalesWorkspace: React.FC<
             type="button"
             onClick={handleTestReceipt}
             disabled={sales.length === 0}
-            className="mt-auto flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+            className="mt-auto flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
           >
             <FileText className="h-4 w-4" />
             <span>Preview ESC/POS Test Print & Hex Bytes</span>

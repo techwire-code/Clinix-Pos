@@ -1,7 +1,21 @@
 import { jsPDF } from 'jspdf';
-import { SaleRecord } from '../types/pharmacy';
+import { PharmacySettings, SaleRecord } from '../types/pharmacy';
 
-export function buildA5InvoicePdf(sale: SaleRecord): jsPDF {
+export function buildA5InvoicePdf(
+  sale: SaleRecord,
+  settings?: Partial<PharmacySettings>,
+): jsPDF {
+  const pharmacyName =
+    settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
+  const branchAddress =
+    settings?.branchAddress?.trim() || '17 KM Ferozepur Road, Lahore';
+  const phoneNumber = settings?.phoneNumber?.trim() || '';
+  const licenseNumber = settings?.licenseNumber?.trim() || '';
+  const footerNote =
+    settings?.receiptFooterNote?.trim() ||
+    'Unopened medicines with original invoice may be exchanged within 7 days.';
+  const cur = (settings?.currencyLabel?.trim() || 'PKR').toUpperCase();
+
   // A5 dimensions in mm: 148 x 210
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -17,7 +31,7 @@ export function buildA5InvoicePdf(sale: SaleRecord): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(13, 122, 95);
-  doc.text('CLINIX COMMUNITY PHARMACY', left, y);
+  doc.text(pharmacyName.toUpperCase(), left, y);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
@@ -28,11 +42,24 @@ export function buildA5InvoicePdf(sale: SaleRecord): jsPDF {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(51, 65, 85);
-  doc.text('17 KM Ferozepur Road, Lahore', left, y);
+  doc.text(branchAddress, left, y);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(13, 122, 95);
   doc.text(sale.invoiceNumber, right, y, { align: 'right' });
+
+  const contactBits = [
+    phoneNumber ? `Tel: ${phoneNumber}` : '',
+    licenseNumber ? `Lic: ${licenseNumber}` : '',
+  ].filter(Boolean);
+
+  if (contactBits.length > 0) {
+    y += 4;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(contactBits.join(' · '), left, y);
+  }
 
   y += 4;
   doc.setDrawColor(13, 122, 95);
@@ -64,7 +91,10 @@ export function buildA5InvoicePdf(sale: SaleRecord): jsPDF {
   });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.text(`${formattedDate} · ${sale.paymentMode}`, right - 3, y + 10, {
+  const modeLabel = sale.transactionReference
+    ? `${sale.paymentMode} (${sale.transactionReference})`
+    : sale.paymentMode;
+  doc.text(`${formattedDate} · ${modeLabel}`, right - 3, y + 10, {
     align: 'right',
   });
 
@@ -119,18 +149,19 @@ export function buildA5InvoicePdf(sale: SaleRecord): jsPDF {
   // Totals Box
   y += 8;
   const boxX = 78;
+  const hasCashDetails = sale.cashReceived !== undefined;
   doc.setDrawColor(226, 232, 240);
-  doc.rect(boxX, y, right - boxX, 24, 'S');
+  doc.rect(boxX, y, right - boxX, hasCashDetails ? 35 : 24, 'S');
 
   doc.setFontSize(8);
   doc.text('Subtotal:', boxX + 3, y + 5.5);
-  doc.text(`PKR ${sale.subtotal.toFixed(2)}`, right - 3, y + 5.5, {
+  doc.text(`${cur} ${sale.subtotal.toFixed(2)}`, right - 3, y + 5.5, {
     align: 'right',
   });
 
   doc.text('Total Discount:', boxX + 3, y + 11);
   doc.setTextColor(180, 83, 9);
-  doc.text(`-PKR ${sale.discountAmount.toFixed(2)}`, right - 3, y + 11, {
+  doc.text(`-${cur} ${sale.discountAmount.toFixed(2)}`, right - 3, y + 11, {
     align: 'right',
   });
 
@@ -141,54 +172,78 @@ export function buildA5InvoicePdf(sale: SaleRecord): jsPDF {
   doc.setFontSize(9.5);
   doc.setTextColor(13, 122, 95);
   doc.text('Net Payable:', boxX + 3, y + 20.5);
-  doc.text(`PKR ${sale.netPayable.toFixed(2)}`, right - 3, y + 20.5, {
+  doc.text(`${cur} ${sale.netPayable.toFixed(2)}`, right - 3, y + 20.5, {
     align: 'right',
   });
+
+  if (hasCashDetails && sale.cashReceived !== undefined) {
+    const bal = sale.changeReturned ?? sale.cashReceived - sale.netPayable;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(51, 65, 85);
+    doc.text('Cash Received:', boxX + 3, y + 26.5);
+    doc.text(`${cur} ${sale.cashReceived.toFixed(2)}`, right - 3, y + 26.5, {
+      align: 'right',
+    });
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text('Balance / Change:', boxX + 3, y + 32);
+    doc.text(`${cur} ${bal.toFixed(2)}`, right - 3, y + 32, {
+      align: 'right',
+    });
+  }
 
   // Footer
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
   doc.setTextColor(100, 116, 139);
-  doc.text(
-    'Unopened medicines with original invoice may be exchanged within 7 days.',
-    74,
-    196,
-    { align: 'center' },
-  );
+  doc.text(footerNote, 74, 196, { align: 'center', maxWidth: 124 });
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text('Clinix Community Pharmacy · 17 KM Ferozepur Road, Lahore', 74, 201, {
+  doc.text(`${pharmacyName} · ${branchAddress}`, 74, 202, {
     align: 'center',
   });
 
   return doc;
 }
 
-export function downloadA5InvoicePdf(sale: SaleRecord): void {
-  const doc = buildA5InvoicePdf(sale);
-  doc.save(`${sale.invoiceNumber}_Clinix_Pharmacy_A5.pdf`);
+export function downloadA5InvoicePdf(
+  sale: SaleRecord,
+  settings?: Partial<PharmacySettings>,
+): void {
+  const doc = buildA5InvoicePdf(sale, settings);
+  doc.save(`${sale.invoiceNumber}_Pharmacy_A5.pdf`);
 }
 
-export async function shareInvoiceSummary(sale: SaleRecord): Promise<'shared' | 'copied'> {
+export async function shareInvoiceSummary(
+  sale: SaleRecord,
+  settings?: Partial<PharmacySettings>,
+): Promise<'shared' | 'copied'> {
+  const pharmacyName =
+    settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
+  const branchAddress =
+    settings?.branchAddress?.trim() || '17 KM Ferozepur Road, Lahore';
+  const cur = (settings?.currencyLabel?.trim() || 'PKR').toUpperCase();
+
   const summaryText = [
-    `CLINIX COMMUNITY PHARMACY (17 KM Ferozepur Road, Lahore)`,
+    `${pharmacyName.toUpperCase()} (${branchAddress})`,
     `Invoice: ${sale.invoiceNumber}`,
     `Party: ${sale.partyName}`,
-    `Payment Mode: ${sale.paymentMode}`,
-    `Subtotal: PKR ${sale.subtotal.toFixed(2)}`,
-    `Discount: -PKR ${sale.discountAmount.toFixed(2)}`,
-    `Net Payable: PKR ${sale.netPayable.toFixed(2)}`,
+    `Payment Mode: ${sale.paymentMode}${sale.transactionReference ? ` (Ref: ${sale.transactionReference})` : ''}`,
+    `Subtotal: ${cur} ${sale.subtotal.toFixed(2)}`,
+    `Discount: -${cur} ${sale.discountAmount.toFixed(2)}`,
+    `Net Payable: ${cur} ${sale.netPayable.toFixed(2)}`,
   ].join('\n');
 
-  const doc = buildA5InvoicePdf(sale);
+  const doc = buildA5InvoicePdf(sale, settings);
   const blob = doc.output('blob');
-  const file = new File([blob], `${sale.invoiceNumber}_Clinix_Pharmacy.pdf`, {
+  const file = new File([blob], `${sale.invoiceNumber}_Pharmacy.pdf`, {
     type: 'application/pdf',
   });
 
   if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
     await navigator.share({
-      title: `Clinix Pharmacy Invoice ${sale.invoiceNumber}`,
+      title: `${pharmacyName} Invoice ${sale.invoiceNumber}`,
       text: summaryText,
       files: [file],
     });

@@ -1,5 +1,6 @@
 import {
   DEFAULT_PRINTER_CONFIG,
+  SEED_EXPENSES,
   SEED_ITEMS,
   SEED_PARTIES,
   SEED_PURCHASES,
@@ -7,9 +8,11 @@ import {
 } from '../data/seedData';
 import {
   CartLine,
+  ExpenseRecord,
   Party,
   PaymentMode,
   PharmacyItem,
+  PharmacySettings,
   PrinterConfig,
   PurchaseDraftLine,
   PurchaseItemRecord,
@@ -23,21 +26,58 @@ const STORAGE_KEYS = {
   parties: 'clinix_pos_parties_v1',
   sales: 'clinix_pos_sales_v1',
   purchases: 'clinix_pos_purchases_v1',
+  expenses: 'clinix_pos_expenses_v1',
   printer: 'clinix_pos_printer_v1',
+  settings: 'clinix_pos_settings_v1',
+  lowStockThreshold: 'clinix_low_stock_threshold_v1',
 };
+
+export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
+  pharmacyName: 'Clinix Community Pharmacy',
+  branchAddress: '17 KM Ferozepur Road, Lahore',
+  phoneNumber: '+92 42 35950011',
+  licenseNumber: 'DL-LHR-04892',
+  receiptFooterNote:
+    'Unopened medicines with original invoice may be exchanged within 7 days.',
+  autoPrintReceipt: DEFAULT_PRINTER_CONFIG.autoPrintOnSale,
+  savedPrinterName: DEFAULT_PRINTER_CONFIG.deviceName,
+  savedPrinterMac: DEFAULT_PRINTER_CONFIG.macAddress,
+  paperWidth: DEFAULT_PRINTER_CONFIG.paperWidth,
+  preferUsbScannerFocus: true,
+  currencyLabel: 'PKR',
+  lowStockThreshold: 10,
+  nearExpiryDays: 60,
+  activeRole: 'admin',
+};
+
+const memoryFallbackStorage = new Map<string, string>();
 
 function readStorage<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(key) ?? memoryFallbackStorage.get(key) ?? null;
     if (!raw) return fallback;
     return JSON.parse(raw) as T;
   } catch {
+    const mem = memoryFallbackStorage.get(key);
+    if (mem) {
+      try {
+        return JSON.parse(mem) as T;
+      } catch {
+        return fallback;
+      }
+    }
     return fallback;
   }
 }
 
 function writeStorage<T>(key: string, data: T): void {
-  localStorage.setItem(key, JSON.stringify(data));
+  const serialized = JSON.stringify(data);
+  memoryFallbackStorage.set(key, serialized);
+  try {
+    localStorage.setItem(key, serialized);
+  } catch {
+    // Fallback already stored in memoryFallbackStorage when localStorage is blocked/full
+  }
 }
 
 export function calculateUnitPrice(
@@ -146,24 +186,199 @@ export function savePrinterConfig(config: PrinterConfig): void {
   writeStorage(STORAGE_KEYS.printer, config);
 }
 
+export function loadSettings(): PharmacySettings {
+  const existing = readStorage<Partial<PharmacySettings> | null>(
+    STORAGE_KEYS.settings,
+    null,
+  );
+  const printer = loadPrinterConfig();
+  if (existing) {
+    const safeRole =
+      existing.activeRole === 'admin' ||
+      existing.activeRole === 'manager' ||
+      existing.activeRole === 'cashier' ||
+      existing.activeRole === 'sales'
+        ? existing.activeRole
+        : DEFAULT_PHARMACY_SETTINGS.activeRole;
+    return {
+      pharmacyName:
+        typeof existing.pharmacyName === 'string' && existing.pharmacyName.trim()
+          ? existing.pharmacyName.trim()
+          : DEFAULT_PHARMACY_SETTINGS.pharmacyName,
+      branchAddress:
+        typeof existing.branchAddress === 'string' &&
+        existing.branchAddress.trim()
+          ? existing.branchAddress.trim()
+          : DEFAULT_PHARMACY_SETTINGS.branchAddress,
+      phoneNumber:
+        typeof existing.phoneNumber === 'string'
+          ? existing.phoneNumber
+          : DEFAULT_PHARMACY_SETTINGS.phoneNumber,
+      licenseNumber:
+        typeof existing.licenseNumber === 'string'
+          ? existing.licenseNumber
+          : DEFAULT_PHARMACY_SETTINGS.licenseNumber,
+      receiptFooterNote:
+        typeof existing.receiptFooterNote === 'string'
+          ? existing.receiptFooterNote
+          : DEFAULT_PHARMACY_SETTINGS.receiptFooterNote,
+      autoPrintReceipt:
+        typeof existing.autoPrintReceipt === 'boolean'
+          ? existing.autoPrintReceipt
+          : printer.autoPrintOnSale,
+      savedPrinterName:
+        typeof existing.savedPrinterName === 'string'
+          ? existing.savedPrinterName
+          : printer.deviceName,
+      savedPrinterMac:
+        typeof existing.savedPrinterMac === 'string'
+          ? existing.savedPrinterMac
+          : printer.macAddress,
+      paperWidth:
+        existing.paperWidth === '58mm' || existing.paperWidth === '80mm'
+          ? existing.paperWidth
+          : printer.paperWidth,
+      preferUsbScannerFocus:
+        typeof existing.preferUsbScannerFocus === 'boolean'
+          ? existing.preferUsbScannerFocus
+          : DEFAULT_PHARMACY_SETTINGS.preferUsbScannerFocus,
+      currencyLabel:
+        typeof existing.currencyLabel === 'string' &&
+        existing.currencyLabel.trim()
+          ? existing.currencyLabel.trim().toUpperCase()
+          : DEFAULT_PHARMACY_SETTINGS.currencyLabel,
+      lowStockThreshold:
+        Number.isFinite(Number(existing.lowStockThreshold)) &&
+        Number(existing.lowStockThreshold) >= 1
+          ? Math.floor(Number(existing.lowStockThreshold))
+          : DEFAULT_PHARMACY_SETTINGS.lowStockThreshold,
+      nearExpiryDays:
+        Number.isFinite(Number(existing.nearExpiryDays)) &&
+        Number(existing.nearExpiryDays) >= 1
+          ? Math.floor(Number(existing.nearExpiryDays))
+          : DEFAULT_PHARMACY_SETTINGS.nearExpiryDays,
+      activeRole: safeRole,
+    };
+  }
+
+  const seeded: PharmacySettings = {
+    ...DEFAULT_PHARMACY_SETTINGS,
+    autoPrintReceipt: printer.autoPrintOnSale,
+    savedPrinterName: printer.deviceName,
+    savedPrinterMac: printer.macAddress,
+    paperWidth: printer.paperWidth,
+  };
+  writeStorage(STORAGE_KEYS.settings, seeded);
+  return seeded;
+}
+
+export function saveSettings(next: PharmacySettings): PharmacySettings {
+  const normalized: PharmacySettings = {
+    pharmacyName:
+      next.pharmacyName.trim() || DEFAULT_PHARMACY_SETTINGS.pharmacyName,
+    branchAddress:
+      next.branchAddress.trim() || DEFAULT_PHARMACY_SETTINGS.branchAddress,
+    phoneNumber: next.phoneNumber.trim(),
+    licenseNumber: next.licenseNumber.trim(),
+    receiptFooterNote: next.receiptFooterNote.trim(),
+    autoPrintReceipt: Boolean(next.autoPrintReceipt),
+    savedPrinterName: next.savedPrinterName.trim(),
+    savedPrinterMac: next.savedPrinterMac.trim(),
+    paperWidth: next.paperWidth === '58mm' ? '58mm' : '80mm',
+    preferUsbScannerFocus: Boolean(next.preferUsbScannerFocus),
+    currencyLabel: (next.currencyLabel.trim() || 'PKR').toUpperCase(),
+    lowStockThreshold: Math.max(
+      1,
+      Math.floor(Number(next.lowStockThreshold) || 10),
+    ),
+    nearExpiryDays: Math.max(1, Math.floor(Number(next.nearExpiryDays) || 60)),
+    activeRole: next.activeRole,
+  };
+
+  writeStorage(STORAGE_KEYS.settings, normalized);
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.lowStockThreshold,
+      String(normalized.lowStockThreshold),
+    );
+  } catch {
+    // Ignore storage quota errors
+  }
+
+  const syncedPrinter: PrinterConfig = {
+    deviceName:
+      normalized.savedPrinterName || DEFAULT_PRINTER_CONFIG.deviceName,
+    macAddress:
+      normalized.savedPrinterMac || DEFAULT_PRINTER_CONFIG.macAddress,
+    paperWidth: normalized.paperWidth,
+    autoPrintOnSale: normalized.autoPrintReceipt,
+  };
+  savePrinterConfig(syncedPrinter);
+
+  return normalized;
+}
+
+export function resetSettingsToDefaults(): PharmacySettings {
+  // Never wipes items, parties, sales, purchases, or expenses.
+  return saveSettings({ ...DEFAULT_PHARMACY_SETTINGS });
+}
+
+export function exportDatabaseBackupJson(): string {
+  const payload = {
+    app: 'Clinix Community Pharmacy POS',
+    schemaVersion: 2,
+    exportedAt: new Date().toISOString(),
+    tables: {
+      app_settings: loadSettings(),
+      items: loadItems(),
+      parties: loadParties(),
+      sales: loadSales(),
+      purchases: loadPurchases(),
+      expenses: loadExpenses(),
+      printer: loadPrinterConfig(),
+    },
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
+export function loadExpenses(): ExpenseRecord[] {
+  const existing = readStorage<ExpenseRecord[] | null>(
+    STORAGE_KEYS.expenses,
+    null,
+  );
+  if (existing && Array.isArray(existing)) return existing;
+  writeStorage(STORAGE_KEYS.expenses, SEED_EXPENSES);
+  return SEED_EXPENSES;
+}
+
+export function saveExpenses(expenses: ExpenseRecord[]): void {
+  writeStorage(STORAGE_KEYS.expenses, expenses);
+}
+
 export function resetDemoDatabase(): {
   items: PharmacyItem[];
   parties: Party[];
   sales: SaleRecord[];
   purchases: PurchaseRecord[];
+  expenses: ExpenseRecord[];
   printer: PrinterConfig;
+  settings: PharmacySettings;
 } {
   writeStorage(STORAGE_KEYS.items, SEED_ITEMS);
   writeStorage(STORAGE_KEYS.parties, SEED_PARTIES);
   writeStorage(STORAGE_KEYS.sales, SEED_SALES);
   writeStorage(STORAGE_KEYS.purchases, SEED_PURCHASES);
+  writeStorage(STORAGE_KEYS.expenses, SEED_EXPENSES);
   writeStorage(STORAGE_KEYS.printer, DEFAULT_PRINTER_CONFIG);
+  const settings = saveSettings({ ...DEFAULT_PHARMACY_SETTINGS });
   return {
     items: SEED_ITEMS,
     parties: SEED_PARTIES,
     sales: SEED_SALES,
     purchases: SEED_PURCHASES,
+    expenses: SEED_EXPENSES,
     printer: DEFAULT_PRINTER_CONFIG,
+    settings,
   };
 }
 
@@ -174,11 +389,19 @@ export interface CompleteSaleResult {
   updatedSales: SaleRecord[];
 }
 
+export function isCreditPaymentMode(mode: PaymentMode): boolean {
+  return mode === 'Credit / Khata' || mode === 'Credit/Party Ledger';
+}
+
 export function executeSaleTransaction(params: {
   cartLines: CartLine[];
   billDiscount: number;
   paymentMode: PaymentMode;
   party: Party | null;
+  transactionReference?: string;
+  cashReceived?: number;
+  createdBy?: string;
+  createdByName?: string;
   currentItems: PharmacyItem[];
   currentParties: Party[];
   currentSales: SaleRecord[];
@@ -188,6 +411,10 @@ export function executeSaleTransaction(params: {
     billDiscount,
     paymentMode,
     party,
+    transactionReference,
+    cashReceived,
+    createdBy,
+    createdByName,
     currentItems,
     currentParties,
     currentSales,
@@ -197,17 +424,20 @@ export function executeSaleTransaction(params: {
     throw new Error('Cannot complete checkout with an empty cart.');
   }
 
-  if (paymentMode === 'Credit/Party Ledger' && !party) {
-    throw new Error('Select a customer party for Credit/Party Ledger billing.');
+  if (isCreditPaymentMode(paymentMode) && !party) {
+    throw new Error('Select a customer party for Credit / Khata billing.');
   }
 
   // Validate stock availability before deducting
   for (const line of cartLines) {
+    if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
+      throw new Error(`Invalid quantity for "${line.item.name}".`);
+    }
     const dbItem = currentItems.find((i) => i.id === line.item.id);
     if (!dbItem) {
       throw new Error(`Item "${line.item.name}" no longer exists in inventory.`);
     }
-    if (dbItem.stockQuantity < line.quantity) {
+    if (dbItem.stockQuantity + 0.0001 < line.quantity) {
       throw new Error(
         `Insufficient stock for ${dbItem.name} (Available: ${dbItem.stockQuantity}, Requested: ${line.quantity}).`,
       );
@@ -257,6 +487,19 @@ export function executeSaleTransaction(params: {
     };
   });
 
+  const resolvedCashReceived =
+    paymentMode === 'Cash' &&
+    cashReceived !== undefined &&
+    Number.isFinite(cashReceived)
+      ? Math.max(0, cashReceived)
+      : undefined;
+  const resolvedChangeReturned =
+    resolvedCashReceived !== undefined
+      ? Math.round((resolvedCashReceived - netPayable) * 100) / 100
+      : undefined;
+
+  const cleanRef = transactionReference?.trim();
+
   const newSale: SaleRecord = {
     id: nextSaleId,
     invoiceNumber,
@@ -268,7 +511,16 @@ export function executeSaleTransaction(params: {
     totalCost,
     netProfit,
     paymentMode,
+    ...(cleanRef ? { transactionReference: cleanRef } : {}),
+    ...(resolvedCashReceived !== undefined
+      ? {
+          cashReceived: resolvedCashReceived,
+          changeReturned: resolvedChangeReturned,
+        }
+      : {}),
     createdAt: new Date().toISOString(),
+    createdBy,
+    createdByName,
     items: saleItems,
   };
 
@@ -278,13 +530,15 @@ export function executeSaleTransaction(params: {
     if (!soldLine) return item;
     return {
       ...item,
-      stockQuantity: Math.max(0, item.stockQuantity - soldLine.quantity),
+      stockQuantity:
+        Math.round(Math.max(0, item.stockQuantity - soldLine.quantity) * 100) /
+        100,
     };
   });
 
-  // Update Customer To Collect balance if Credit/Party Ledger
+  // Update Customer To Collect balance if Credit / Khata or Credit/Party Ledger
   const updatedParties = currentParties.map((p) => {
-    if (paymentMode === 'Credit/Party Ledger' && party && p.id === party.id) {
+    if (isCreditPaymentMode(paymentMode) && party && p.id === party.id) {
       return { ...p, balance: p.balance + netPayable };
     }
     return p;

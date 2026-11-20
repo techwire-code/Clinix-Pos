@@ -1,4 +1,11 @@
-import { Party, PharmacyItem, PrinterConfig, PurchaseRecord, SaleRecord } from '../types/pharmacy';
+import {
+  ExpenseRecord,
+  Party,
+  PharmacyItem,
+  PrinterConfig,
+  PurchaseRecord,
+  SaleRecord,
+} from '../types/pharmacy';
 
 export const SEED_ITEMS: PharmacyItem[] = [
   {
@@ -612,3 +619,57 @@ export const SEED_PURCHASES: PurchaseRecord[] = [
     ],
   },
 ];
+
+export const SEED_EXPENSES: ExpenseRecord[] = [
+  {
+    id: 5,
+    title: 'Thermal Paper Rolls & Dispensing Pouches',
+    category: 'Supplies & Packaging',
+    amount: 450,
+    date: '2026-11-19',
+    paymentMode: 'Cash',
+    notes: '10x 80mm thermal rolls + pharmacy pouches',
+    createdAt: '2026-11-19T08:30:00.000Z',
+  },
+  {
+    id: 4,
+    title: 'Rider Medicine Home Delivery Fuel',
+    category: 'Delivery & Misc',
+    amount: 300,
+    date: '2026-11-18',
+    paymentMode: 'Cash',
+    notes: 'Ferozepur Road local deliveries',
+    createdAt: '2026-11-18T13:15:00.000Z',
+  },
+  {
+    id: 3,
+    title: 'LESCO Commercial Electricity Bill',
+    category: 'Utilities & Electricity',
+    amount: 1450,
+    date: '2026-11-15',
+    paymentMode: 'Mobile Transfer',
+    notes: 'Cold-chain refrigerator & counter AC',
+    createdAt: '2026-11-15T10:00:00.000Z',
+  },
+  {
+    id: 2,
+    title: 'Counter Staff Monthly Allowance',
+    category: 'Staff Salaries',
+    amount: 2500,
+    date: '2026-11-05',
+    paymentMode: 'Cash',
+    notes: 'Mid-month counter advance',
+    createdAt: '2026-11-05T09:00:00.000Z',
+  },
+  {
+    id: 1,
+    title: 'Shop Rent & Maintenance Share',
+    category: 'Rent',
+    amount: 3200,
+    date: '2026-10-28',
+    paymentMode: 'Bank Transfer',
+    notes: 'Monthly storefront installment',
+    createdAt: '2026-10-28T11:00:00.000Z',
+  },
+];
+

@@ -1,8 +1,36 @@
 export type PartyType = 'customer' | 'supplier';
 
-export type PaymentMode = 'Cash' | 'Credit/Party Ledger' | 'Mobile Transfer';
+export type PaymentMode =
+  | 'Cash'
+  | 'Card'
+  | 'JazzCash / EasyPaisa'
+  | 'Bank Transfer'
+  | 'Credit / Khata'
+  | 'Credit/Party Ledger'
+  | 'Mobile Transfer';
 
 export type ThermalWidth = '58mm' | '80mm';
+
+export type UserRole = 'admin' | 'manager' | 'cashier' | 'sales' | 'user';
+
+export type CounterRole = 'admin' | 'manager' | 'cashier' | 'sales';
+
+export interface PharmacySettings {
+  pharmacyName: string;
+  branchAddress: string;
+  phoneNumber: string;
+  licenseNumber: string;
+  receiptFooterNote: string;
+  autoPrintReceipt: boolean;
+  savedPrinterName: string;
+  savedPrinterMac: string;
+  paperWidth: ThermalWidth;
+  preferUsbScannerFocus: boolean;
+  currencyLabel: string;
+  lowStockThreshold: number;
+  nearExpiryDays: number;
+  activeRole: CounterRole;
+}
 
 export interface PharmacyItem {
   id: number;
@@ -58,7 +86,12 @@ export interface SaleRecord {
   totalCost: number;
   netProfit: number; // netPayable - totalCost
   paymentMode: PaymentMode;
+  transactionReference?: string;
+  cashReceived?: number;
+  changeReturned?: number;
   createdAt: string;
+  createdBy?: string; // Staff username who generated the receipt
+  createdByName?: string; // Staff display name
   items: SaleItemRecord[];
 }
 
@@ -111,3 +144,23 @@ export interface PurchaseDraftLine {
   unitCost: number;
   sellingPrice: number;
 }
+
+export type ExpenseCategory =
+  | 'Rent'
+  | 'Utilities & Electricity'
+  | 'Staff Salaries'
+  | 'Supplies & Packaging'
+  | 'Maintenance'
+  | 'Delivery & Misc';
+
+export interface ExpenseRecord {
+  id: number;
+  title: string;
+  category: ExpenseCategory;
+  amount: number;
+  date: string; // yyyy-MM-dd
+  paymentMode: 'Cash' | 'Mobile Transfer' | 'Bank Transfer';
+  notes: string;
+  createdAt: string;
+}
+

@@ -3,26 +3,85 @@
 
 enum PartyType { customer, supplier }
 
-enum PaymentMode { cash, creditLedger, mobileTransfer }
+enum UserRole { admin, manager, cashier, salesStaff }
+
+extension UserRoleX on UserRole {
+  bool get canViewProfitAndCost =>
+      this == UserRole.admin || this == UserRole.manager;
+
+  String get label {
+    switch (this) {
+      case UserRole.admin:
+        return 'Admin';
+      case UserRole.manager:
+        return 'Manager';
+      case UserRole.cashier:
+        return 'Cashier';
+      case UserRole.salesStaff:
+        return 'Sales Staff';
+    }
+  }
+
+  String get dbValue => name;
+
+  static UserRole fromDb(String? value) {
+    switch (value) {
+      case 'manager':
+        return UserRole.manager;
+      case 'cashier':
+        return UserRole.cashier;
+      case 'salesStaff':
+        return UserRole.salesStaff;
+      case 'admin':
+      default:
+        return UserRole.admin;
+    }
+  }
+}
+
+enum PaymentMode {
+  cash,
+  card,
+  jazzCashEasyPaisa,
+  bankTransfer,
+  creditKhata,
+}
 
 extension PaymentModeX on PaymentMode {
   String get dbValue {
     switch (this) {
       case PaymentMode.cash:
         return 'Cash';
-      case PaymentMode.creditLedger:
-        return 'Credit/Party Ledger';
-      case PaymentMode.mobileTransfer:
-        return 'Mobile Transfer';
+      case PaymentMode.card:
+        return 'Card';
+      case PaymentMode.jazzCashEasyPaisa:
+        return 'JazzCash / EasyPaisa';
+      case PaymentMode.bankTransfer:
+        return 'Bank Transfer';
+      case PaymentMode.creditKhata:
+        return 'Credit / Khata';
     }
   }
 
+  bool get requiresReference =>
+      this == PaymentMode.card ||
+      this == PaymentMode.jazzCashEasyPaisa ||
+      this == PaymentMode.bankTransfer;
+
+  bool get isCreditKhata => this == PaymentMode.creditKhata;
+
   static PaymentMode fromDb(String value) {
     switch (value) {
-      case 'Credit/Party Ledger':
-        return PaymentMode.creditLedger;
+      case 'Card':
+        return PaymentMode.card;
+      case 'JazzCash / EasyPaisa':
       case 'Mobile Transfer':
-        return PaymentMode.mobileTransfer;
+        return PaymentMode.jazzCashEasyPaisa;
+      case 'Bank Transfer':
+        return PaymentMode.bankTransfer;
+      case 'Credit / Khata':
+      case 'Credit/Party Ledger':
+        return PaymentMode.creditKhata;
       case 'Cash':
       default:
         return PaymentMode.cash;
@@ -71,10 +130,16 @@ class PharmacyItem {
 
   bool get isLowStock => stockQuantity <= 10;
 
-  bool get isExpiringSoon {
+  bool isLowStockWithThreshold(int threshold) =>
+      stockQuantity < (threshold < 1 ? 1 : threshold);
+
+  bool get isExpiringSoon => isExpiringWithinDays(90);
+
+  bool isExpiringWithinDays(int windowDays) {
     final parsed = DateTime.tryParse(expiryDate);
     if (parsed == null) return false;
-    return parsed.difference(DateTime.now()).inDays <= 90;
+    final safeDays = windowDays < 1 ? 1 : windowDays;
+    return parsed.difference(DateTime.now()).inDays <= safeDays;
   }
 
   PharmacyItem copyWith({
@@ -155,6 +220,21 @@ class PharmacyItem {
       expiryDate: (map['expiry_date'] ?? '') as String,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PharmacyItem &&
+        (id != null && other.id != null
+            ? id == other.id
+            : name == other.name &&
+                barcode == other.barcode &&
+                batchNumber == other.batchNumber);
+  }
+
+  @override
+  int get hashCode =>
+      id != null ? id.hashCode : Object.hash(name, barcode, batchNumber);
 }
 
 class Party {
@@ -211,6 +291,19 @@ class Party {
             : PartyType.customer,
         balance: (map['balance'] as num?)?.toDouble() ?? 0.0,
       );
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Party &&
+        (id != null && other.id != null
+            ? id == other.id
+            : name == other.name && phone == other.phone && type == other.type);
+  }
+
+  @override
+  int get hashCode =>
+      id != null ? id.hashCode : Object.hash(name, phone, type);
 }
 
 class CartLine {
@@ -257,6 +350,9 @@ class SaleRecord {
   final double totalCost;
   final double netProfit; // netPayable - totalCost
   final PaymentMode paymentMode;
+  final String? transactionReference;
+  final double? cashReceived;
+  final double? changeReturned;
   final String createdAt;
 
   const SaleRecord({
@@ -270,6 +366,9 @@ class SaleRecord {
     required this.totalCost,
     required this.netProfit,
     required this.paymentMode,
+    this.transactionReference,
+    this.cashReceived,
+    this.changeReturned,
     required this.createdAt,
   });
 
@@ -283,6 +382,9 @@ class SaleRecord {
         'total_cost': totalCost,
         'net_profit': netProfit,
         'payment_mode': paymentMode.dbValue,
+        'transaction_reference': transactionReference,
+        'cash_received': cashReceived,
+        'change_returned': changeReturned,
         'created_at': createdAt,
       };
 
@@ -297,6 +399,9 @@ class SaleRecord {
         totalCost: (map['total_cost'] as num?)?.toDouble() ?? 0.0,
         netProfit: (map['net_profit'] as num?)?.toDouble() ?? 0.0,
         paymentMode: PaymentModeX.fromDb(map['payment_mode'] as String),
+        transactionReference: map['transaction_reference'] as String?,
+        cashReceived: (map['cash_received'] as num?)?.toDouble(),
+        changeReturned: (map['change_returned'] as num?)?.toDouble(),
         createdAt: map['created_at'] as String,
       );
 }
@@ -471,4 +576,129 @@ class PurchaseItemRecord {
         unitCost: (map['unit_cost'] as num).toDouble(),
         lineTotal: (map['line_total'] as num).toDouble(),
       );
+}
+
+class PharmacySettings {
+  final String pharmacyName;
+  final String branchAddress;
+  final String phoneNumber;
+  final String licenseNumber;
+  final String receiptFooterNote;
+  final bool autoPrintReceipt;
+  final String? savedPrinterName;
+  final String? savedPrinterMac;
+  final int paperWidthMm; // 58 or 80
+  final bool preferUsbScannerFocus;
+  final String currencyLabel;
+  final int lowStockThreshold;
+  final int nearExpiryDays;
+  final UserRole activeUserRole;
+
+  const PharmacySettings({
+    this.pharmacyName = 'Clinix Community Pharmacy',
+    this.branchAddress = '17 KM Ferozepur Road, Lahore',
+    this.phoneNumber = '+92 300 0000000',
+    this.licenseNumber = 'DL-LHR-0000',
+    this.receiptFooterNote =
+        'Unopened medicines with original bill may be exchanged within 7 days. Thank you!',
+    this.autoPrintReceipt = false,
+    this.savedPrinterName,
+    this.savedPrinterMac,
+    this.paperWidthMm = 80,
+    this.preferUsbScannerFocus = true,
+    this.currencyLabel = 'PKR',
+    this.lowStockThreshold = 10,
+    this.nearExpiryDays = 60,
+    this.activeUserRole = UserRole.admin,
+  });
+
+  factory PharmacySettings.defaults() => const PharmacySettings();
+
+  PharmacySettings copyWith({
+    String? pharmacyName,
+    String? branchAddress,
+    String? phoneNumber,
+    String? licenseNumber,
+    String? receiptFooterNote,
+    bool? autoPrintReceipt,
+    String? savedPrinterName,
+    String? savedPrinterMac,
+    bool clearSavedPrinter = false,
+    int? paperWidthMm,
+    bool? preferUsbScannerFocus,
+    String? currencyLabel,
+    int? lowStockThreshold,
+    int? nearExpiryDays,
+    UserRole? activeUserRole,
+  }) {
+    return PharmacySettings(
+      pharmacyName: pharmacyName ?? this.pharmacyName,
+      branchAddress: branchAddress ?? this.branchAddress,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      licenseNumber: licenseNumber ?? this.licenseNumber,
+      receiptFooterNote: receiptFooterNote ?? this.receiptFooterNote,
+      autoPrintReceipt: autoPrintReceipt ?? this.autoPrintReceipt,
+      savedPrinterName: clearSavedPrinter
+          ? null
+          : (savedPrinterName ?? this.savedPrinterName),
+      savedPrinterMac:
+          clearSavedPrinter ? null : (savedPrinterMac ?? this.savedPrinterMac),
+      paperWidthMm: paperWidthMm ?? this.paperWidthMm,
+      preferUsbScannerFocus:
+          preferUsbScannerFocus ?? this.preferUsbScannerFocus,
+      currencyLabel: currencyLabel ?? this.currencyLabel,
+      lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
+      nearExpiryDays: nearExpiryDays ?? this.nearExpiryDays,
+      activeUserRole: activeUserRole ?? this.activeUserRole,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'id': 1,
+        'pharmacy_name': pharmacyName,
+        'branch_address': branchAddress,
+        'phone_number': phoneNumber,
+        'license_number': licenseNumber,
+        'receipt_footer_note': receiptFooterNote,
+        'auto_print_receipt': autoPrintReceipt ? 1 : 0,
+        'saved_printer_name': savedPrinterName,
+        'saved_printer_mac': savedPrinterMac,
+        'paper_width_mm': paperWidthMm == 58 ? 58 : 80,
+        'prefer_usb_scanner_focus': preferUsbScannerFocus ? 1 : 0,
+        'currency_label':
+            currencyLabel.trim().isEmpty ? 'PKR' : currencyLabel.trim(),
+        'low_stock_threshold': lowStockThreshold < 1 ? 1 : lowStockThreshold,
+        'near_expiry_days': nearExpiryDays < 1 ? 1 : nearExpiryDays,
+        'active_user_role': activeUserRole.dbValue,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+  factory PharmacySettings.fromMap(Map<String, dynamic> map) {
+    final widthRaw = (map['paper_width_mm'] as num?)?.toInt() ?? 80;
+    final lowRaw = (map['low_stock_threshold'] as num?)?.toInt() ?? 10;
+    final expRaw = (map['near_expiry_days'] as num?)?.toInt() ?? 60;
+    final curRaw = (map['currency_label'] as String?)?.trim();
+    return PharmacySettings(
+      pharmacyName: ((map['pharmacy_name'] as String?)?.trim().isNotEmpty ?? false)
+          ? (map['pharmacy_name'] as String).trim()
+          : 'Clinix Community Pharmacy',
+      branchAddress:
+          ((map['branch_address'] as String?)?.trim().isNotEmpty ?? false)
+              ? (map['branch_address'] as String).trim()
+              : '17 KM Ferozepur Road, Lahore',
+      phoneNumber: (map['phone_number'] as String?) ?? '',
+      licenseNumber: (map['license_number'] as String?) ?? '',
+      receiptFooterNote: (map['receipt_footer_note'] as String?) ?? '',
+      autoPrintReceipt: ((map['auto_print_receipt'] as num?)?.toInt() ?? 0) == 1,
+      savedPrinterName: map['saved_printer_name'] as String?,
+      savedPrinterMac: map['saved_printer_mac'] as String?,
+      paperWidthMm: widthRaw == 58 ? 58 : 80,
+      preferUsbScannerFocus:
+          ((map['prefer_usb_scanner_focus'] as num?)?.toInt() ?? 1) == 1,
+      currencyLabel: (curRaw != null && curRaw.isNotEmpty) ? curRaw : 'PKR',
+      lowStockThreshold: lowRaw < 1 ? 1 : lowRaw,
+      nearExpiryDays: expRaw < 1 ? 1 : expRaw,
+      activeUserRole: UserRoleX.fromDb(map['active_user_role'] as String?),
+    );
+  }
 }

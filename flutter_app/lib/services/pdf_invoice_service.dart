@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
 
 /// Professional A5 PDF Invoice Generator & One-Tap Share Service
@@ -21,10 +22,14 @@ class PdfInvoiceService {
   Future<Uint8List> generateA5InvoiceBytes({
     required SaleRecord sale,
     required List<SaleItemRecord> items,
+    PharmacySettings? settings,
   }) async {
+    final cfg = settings ?? PharmacySettings.defaults();
+    final cur =
+        cfg.currencyLabel.trim().isEmpty ? 'PKR' : cfg.currencyLabel.trim();
     final doc = pw.Document(
-      title: 'Invoice ${sale.invoiceNumber} - Clinix Community Pharmacy',
-      author: 'Clinix Community Pharmacy',
+      title: 'Invoice ${sale.invoiceNumber} - ${cfg.pharmacyName}',
+      author: cfg.pharmacyName,
     );
 
     final currency = NumberFormat('#,##0.00');
@@ -61,7 +66,7 @@ class PdfInvoiceService {
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
                         pw.Text(
-                          'CLINIX COMMUNITY PHARMACY',
+                          cfg.pharmacyName.toUpperCase(),
                           style: pw.TextStyle(
                             fontSize: 13,
                             fontWeight: pw.FontWeight.bold,
@@ -70,14 +75,19 @@ class PdfInvoiceService {
                         ),
                         pw.SizedBox(height: 2),
                         pw.Text(
-                          '17 KM Ferozepur Road, Lahore',
+                          cfg.branchAddress,
                           style: const pw.TextStyle(
                             fontSize: 8.5,
                             color: inkColor,
                           ),
                         ),
                         pw.Text(
-                          'Licensed Retail Pharmacy · Cash & Credit Dispensing',
+                          [
+                            if (cfg.phoneNumber.trim().isNotEmpty)
+                              'Tel: ${cfg.phoneNumber.trim()}',
+                            if (cfg.licenseNumber.trim().isNotEmpty)
+                              'Lic: ${cfg.licenseNumber.trim()}',
+                          ].join(' · '),
                           style: const pw.TextStyle(
                             fontSize: 7.5,
                             color: mutedColor,
@@ -156,7 +166,10 @@ class PdfInvoiceService {
                         ),
                         pw.SizedBox(height: 2),
                         pw.Text(
-                          'Mode: ${sale.paymentMode.dbValue}',
+                          sale.transactionReference != null &&
+                                  sale.transactionReference!.isNotEmpty
+                              ? 'Mode: ${sale.paymentMode.dbValue} (${sale.transactionReference})'
+                              : 'Mode: ${sale.paymentMode.dbValue}',
                           style: pw.TextStyle(
                             fontSize: 7.5,
                             fontWeight: pw.FontWeight.bold,
@@ -233,17 +246,17 @@ class PdfInvoiceService {
                     child: pw.Column(
                       children: [
                         _summaryRow(
-                            'Subtotal', 'PKR ${currency.format(sale.subtotal)}'),
+                            'Subtotal', '$cur ${currency.format(sale.subtotal)}'),
                         pw.SizedBox(height: 3),
                         _summaryRow(
                           'Total Discount',
-                          '-PKR ${currency.format(sale.discountAmount)}',
+                          '-$cur ${currency.format(sale.discountAmount)}',
                           valueColor: const PdfColor.fromInt(0xFFB45309),
                         ),
                         pw.Divider(color: borderColor, height: 8),
                         _summaryRow(
                           'Net Payable',
-                          'PKR ${currency.format(sale.netPayable)}',
+                          '$cur ${currency.format(sale.netPayable)}',
                           isBold: true,
                           valueColor: primaryColor,
                         ),
@@ -265,17 +278,18 @@ class PdfInvoiceService {
                 ),
                 child: pw.Column(
                   children: [
-                    pw.Text(
-                      'Return Policy: Unopened medicines with original bill may be exchanged within 7 days. Refrigerated items are non-returnable.',
-                      textAlign: pw.TextAlign.center,
-                      style: const pw.TextStyle(
-                        fontSize: 6.5,
-                        color: mutedColor,
+                    if (cfg.receiptFooterNote.trim().isNotEmpty)
+                      pw.Text(
+                        cfg.receiptFooterNote.trim(),
+                        textAlign: pw.TextAlign.center,
+                        style: const pw.TextStyle(
+                          fontSize: 6.5,
+                          color: mutedColor,
+                        ),
                       ),
-                    ),
                     pw.SizedBox(height: 3),
                     pw.Text(
-                      'Clinix Community Pharmacy · 17 KM Ferozepur Road, Lahore',
+                      '${cfg.pharmacyName} · ${cfg.branchAddress}',
                       style: pw.TextStyle(
                         fontSize: 7,
                         fontWeight: pw.FontWeight.bold,
@@ -326,10 +340,17 @@ class PdfInvoiceService {
   Future<void> printA5Pdf({
     required SaleRecord sale,
     required List<SaleItemRecord> items,
+    PharmacySettings? settings,
   }) async {
-    final bytes = await generateA5InvoiceBytes(sale: sale, items: items);
+    final activeSettings =
+        settings ?? await DatabaseHelper.instance.getSettings();
+    final bytes = await generateA5InvoiceBytes(
+      sale: sale,
+      items: items,
+      settings: activeSettings,
+    );
     await Printing.layoutPdf(
-      name: '${sale.invoiceNumber}_Clinix_Pharmacy.pdf',
+      name: '${sale.invoiceNumber}_Invoice.pdf',
       format: PdfPageFormat.a5,
       onLayout: (_) async => bytes,
     );
@@ -340,17 +361,27 @@ class PdfInvoiceService {
   Future<void> shareInvoicePdf({
     required SaleRecord sale,
     required List<SaleItemRecord> items,
+    PharmacySettings? settings,
   }) async {
-    final bytes = await generateA5InvoiceBytes(sale: sale, items: items);
+    final activeSettings =
+        settings ?? await DatabaseHelper.instance.getSettings();
+    final cur = activeSettings.currencyLabel.trim().isEmpty
+        ? 'PKR'
+        : activeSettings.currencyLabel.trim();
+    final bytes = await generateA5InvoiceBytes(
+      sale: sale,
+      items: items,
+      settings: activeSettings,
+    );
     final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/${sale.invoiceNumber}_Clinix_Pharmacy.pdf');
+    final file = File('${dir.path}/${sale.invoiceNumber}_Invoice.pdf');
     await file.writeAsBytes(bytes, flush: true);
 
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/pdf')],
-      subject: 'Clinix Community Pharmacy Invoice ${sale.invoiceNumber}',
+      subject: '${activeSettings.pharmacyName} Invoice ${sale.invoiceNumber}',
       text:
-          'Assalam-o-Alaikum, please find attached your invoice (${sale.invoiceNumber}) from Clinix Community Pharmacy, 17 KM Ferozepur Road, Lahore. Net Payable: PKR ${sale.netPayable.toStringAsFixed(2)}.',
+          'Assalam-o-Alaikum, please find attached your invoice (${sale.invoiceNumber}) from ${activeSettings.pharmacyName}, ${activeSettings.branchAddress}. Net Payable: $cur ${sale.netPayable.toStringAsFixed(2)}.',
     );
   }
 }

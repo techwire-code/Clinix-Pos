@@ -338,66 +338,66 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
     <div className="flex flex-col gap-6">
       {/* KPI Summary Strip */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Total Purchases
           </p>
-          <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900">
+          <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
             PKR {metrics.totalPurchased.toLocaleString()}
           </p>
-          <p className="mt-0.5 font-mono-tabular text-xs text-slate-500">
+          <p className="mt-0.5 font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
             {purchases.length} distributor bills
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Supplier Payables (To Pay)
           </p>
-          <p className="mt-1 font-mono-tabular text-2xl font-bold text-amber-700">
+          <p className="mt-1 font-mono-tabular text-2xl font-bold text-amber-700 dark:text-amber-400">
             PKR {metrics.totalToPay.toLocaleString()}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             Outstanding distributor dues
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Stock Units Received
           </p>
-          <p className="mt-1 font-mono-tabular text-2xl font-bold text-[#0D7A5F]">
+          <p className="mt-1 font-mono-tabular text-2xl font-bold text-[#0D7A5F] dark:text-emerald-400">
             {metrics.unitsReceived.toLocaleString()}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             Auto-added to inventory
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Active Suppliers
           </p>
-          <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900">
+          <p className="mt-1 font-mono-tabular text-2xl font-bold text-slate-900 dark:text-slate-100">
             {metrics.supplierCount}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             Wholesale & pharma distributors
           </p>
         </div>
       </div>
 
       {/* Toolbar */}
-      <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center">
+      <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-1 flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
             <button
               type="button"
               onClick={() => setSubView('bills')}
               className={`rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
                 subView === 'bills'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
               }`}
             >
               Purchase Bills ({purchases.length})
@@ -407,8 +407,8 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               onClick={() => setSubView('suppliers')}
               className={`rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
                 subView === 'suppliers'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
               }`}
             >
               Suppliers ({suppliers.length})
@@ -426,7 +426,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   ? 'Search purchase #, supplier invoice, or distributor...'
                   : 'Search supplier name or phone...'
               }
-              className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm focus:border-[#0D7A5F] focus:outline-none"
+              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-400"
             />
           </div>
         </div>
@@ -435,7 +435,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
           <button
             type="button"
             onClick={() => setIsSupplierModalOpen(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 whitespace-nowrap hover:bg-slate-50"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 whitespace-nowrap hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>Add Supplier</span>
@@ -453,10 +453,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
       {/* Purchase Bills Table */}
       {subView === 'bills' ? (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600">
+              <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
                   <th className="px-4 py-3">Purchase / Supplier Inv</th>
                   <th className="px-4 py-3">Supplier</th>
@@ -466,12 +466,12 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   <th className="px-4 py-3 text-right">Balance Due</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredPurchases.length === 0 ? (
                   <tr>
                     <td
                       colSpan={6}
-                      className="px-4 py-10 text-center text-slate-500"
+                      className="px-4 py-10 text-center text-slate-500 dark:text-slate-400"
                     >
                       No purchase bills recorded yet. Click "Record Purchase" to
                       restock inventory.
@@ -486,7 +486,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                           onClick={() =>
                             setExpandedPurchaseId(isExpanded ? null : pur.id)
                           }
-                          className="cursor-pointer hover:bg-slate-50/80"
+                          className="cursor-pointer hover:bg-slate-50/80 dark:hover:bg-slate-800/40"
                         >
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
@@ -496,10 +496,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                                 <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
                               )}
                               <div>
-                                <p className="font-mono-tabular font-semibold text-slate-900">
+                                <p className="font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                                   {pur.purchaseNumber}
                                 </p>
-                                <p className="font-mono-tabular text-[11px] text-slate-500">
+                                <p className="font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
                                   Inv: {pur.supplierInvoiceNo} ·{' '}
                                   {new Date(pur.createdAt).toLocaleDateString(
                                     'en-PK',
@@ -509,28 +509,28 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            <p className="font-semibold text-slate-900">
+                            <p className="font-semibold text-slate-900 dark:text-slate-100">
                               {pur.supplierName}
                             </p>
-                            <p className="text-[11px] text-slate-500">
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
                               {pur.items.length}{' '}
                               {pur.items.length === 1 ? 'line' : 'lines'}
                             </p>
                           </td>
-                          <td className="px-4 py-3 text-slate-700">
+                          <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
                             {pur.paymentMode}
                           </td>
-                          <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900">
+                          <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                             PKR {pur.totalAmount.toFixed(2)}
                           </td>
-                          <td className="px-4 py-3 text-right font-mono-tabular text-slate-600">
+                          <td className="px-4 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
                             PKR {pur.paidAmount.toFixed(2)}
                           </td>
                           <td
                             className={`px-4 py-3 text-right font-mono-tabular font-semibold ${
                               pur.balanceDue > 0
-                                ? 'text-amber-700'
-                                : 'text-[#0D7A5F]'
+                                ? 'text-amber-700 dark:text-amber-400'
+                                : 'text-[#0D7A5F] dark:text-emerald-400'
                             }`}
                           >
                             {pur.balanceDue > 0
@@ -540,11 +540,11 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                         </tr>
 
                         {isExpanded && (
-                          <tr className="bg-slate-50/70">
+                          <tr className="bg-slate-50/70 dark:bg-slate-950/60">
                             <td colSpan={6} className="px-8 py-3">
                               <table className="w-full text-left text-[11px]">
                                 <thead>
-                                  <tr className="border-b border-slate-200 text-slate-500">
+                                  <tr className="border-b border-slate-200 text-slate-500 dark:border-slate-800 dark:text-slate-400">
                                     <th className="py-1.5 font-medium">
                                       Received Medicine
                                     </th>
@@ -562,23 +562,23 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                                     </th>
                                   </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-200/70">
+                                <tbody className="divide-y divide-slate-200/70 dark:divide-slate-800">
                                   {pur.items.map((line) => (
                                     <tr key={line.id}>
-                                      <td className="py-2 font-medium text-slate-900">
+                                      <td className="py-2 font-medium text-slate-900 dark:text-slate-100">
                                         {line.itemName}
                                       </td>
-                                      <td className="py-2 font-mono-tabular text-slate-600">
+                                      <td className="py-2 font-mono-tabular text-slate-600 dark:text-slate-400">
                                         {line.batchNumber} · Exp{' '}
                                         {line.expiryDate}
                                       </td>
-                                      <td className="py-2 text-right font-mono-tabular text-slate-900">
+                                      <td className="py-2 text-right font-mono-tabular text-slate-900 dark:text-slate-100">
                                         {line.quantity}
                                       </td>
-                                      <td className="py-2 text-right font-mono-tabular text-slate-600">
+                                      <td className="py-2 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
                                         {line.unitCost.toFixed(2)}
                                       </td>
-                                      <td className="py-2 text-right font-mono-tabular font-semibold text-slate-900">
+                                      <td className="py-2 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                                         PKR {line.lineTotal.toFixed(2)}
                                       </td>
                                     </tr>
@@ -598,10 +598,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
         </div>
       ) : (
         /* Suppliers Directory Table */
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600">
+              <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
                   <th className="px-5 py-3">Supplier / Distributor</th>
                   <th className="px-5 py-3">Phone</th>
@@ -611,12 +611,12 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredSuppliers.length === 0 ? (
                   <tr>
                     <td
                       colSpan={6}
-                      className="px-5 py-10 text-center text-slate-500"
+                      className="px-5 py-10 text-center text-slate-500 dark:text-slate-400"
                     >
                       No suppliers match "{search}".
                     </td>
@@ -628,24 +628,27 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       total: 0,
                     };
                     return (
-                      <tr key={sup.id} className="hover:bg-slate-50/70">
-                        <td className="px-5 py-3.5 font-semibold text-slate-900">
+                      <tr
+                        key={sup.id}
+                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
+                      >
+                        <td className="px-5 py-3.5 font-semibold text-slate-900 dark:text-slate-100">
                           {sup.name}
                         </td>
-                        <td className="px-5 py-3.5 font-mono-tabular text-slate-600">
+                        <td className="px-5 py-3.5 font-mono-tabular text-slate-600 dark:text-slate-400">
                           {sup.phone || '—'}
                         </td>
-                        <td className="px-5 py-3.5 text-right font-mono-tabular text-slate-700">
+                        <td className="px-5 py-3.5 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
                           {stats.count}
                         </td>
-                        <td className="px-5 py-3.5 text-right font-mono-tabular text-slate-700">
+                        <td className="px-5 py-3.5 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
                           PKR {stats.total.toFixed(2)}
                         </td>
                         <td
                           className={`px-5 py-3.5 text-right font-mono-tabular font-semibold ${
                             sup.balance > 0
-                              ? 'text-amber-700'
-                              : 'text-slate-500'
+                              ? 'text-amber-700 dark:text-amber-400'
+                              : 'text-slate-500 dark:text-slate-400'
                           }`}
                         >
                           PKR {sup.balance.toFixed(2)}
@@ -666,7 +669,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                                   setSettleTarget(sup);
                                   setSettleAmount(String(sup.balance));
                                 }}
-                                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 whitespace-nowrap hover:bg-slate-50"
+                                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 whitespace-nowrap hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                               >
                                 Pay Balance
                               </button>
@@ -686,7 +689,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
       {/* Record Purchase / Stock-In Modal */}
       {isPurchaseModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 dark:bg-black/70"
           role="dialog"
           aria-modal="true"
           aria-labelledby="record-purchase-title"
@@ -694,17 +697,17 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
           <form
             noValidate
             onSubmit={handleSubmitPurchase}
-            className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+            className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
               <div>
                 <h3
                   id="record-purchase-title"
-                  className="text-base font-semibold text-slate-900"
+                  className="text-base font-semibold text-slate-900 dark:text-slate-100"
                 >
                   Record Supplier Purchase & Stock-In
                 </h3>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Automatically updates inventory quantities, batch details, and
                   supplier payables.
                 </p>
@@ -712,7 +715,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => setIsPurchaseModalOpen(false)}
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -720,7 +723,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
             <div className="flex-1 space-y-5 overflow-y-auto p-6">
               {purchaseError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                   {purchaseError}
                 </div>
               )}
@@ -729,13 +732,13 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label className="text-xs font-medium text-slate-700">
+                    <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
                       Supplier / Distributor
                     </label>
                     <button
                       type="button"
                       onClick={() => setIsSupplierModalOpen(true)}
-                      className="text-xs font-semibold text-[#0D7A5F] hover:underline"
+                      className="text-xs font-semibold text-[#0D7A5F] hover:underline dark:text-emerald-400"
                     >
                       + New Supplier
                     </button>
@@ -746,7 +749,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     onChange={(e) =>
                       setSelectedSupplierId(Number(e.target.value))
                     }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     {suppliers.length === 0 && (
                       <option value="">No suppliers added yet</option>
@@ -760,7 +763,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-700">
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                     Supplier Invoice / Challan #
                   </label>
                   <input
@@ -768,18 +771,18 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     value={supplierInvoiceNo}
                     onChange={(e) => setSupplierInvoiceNo(e.target.value)}
                     placeholder="e.g. MP-LHR-90412"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-sm focus:border-[#0D7A5F] focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
               </div>
 
               {/* Add Medicine Line Builder */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-slate-800">
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                     Add Medicine Line
                   </span>
-                  <div className="flex items-center gap-1 rounded-lg bg-slate-200/70 p-0.5">
+                  <div className="flex items-center gap-1 rounded-lg bg-slate-200/70 p-0.5 dark:bg-slate-900">
                     <button
                       type="button"
                       onClick={() => {
@@ -788,8 +791,8 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       }}
                       className={`rounded-md px-2.5 py-1 text-xs font-medium ${
                         !isNewSkuMode
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-600'
+                          ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                          : 'text-slate-600 dark:text-slate-400'
                       }`}
                     >
                       Existing Medicine
@@ -808,8 +811,8 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       }}
                       className={`rounded-md px-2.5 py-1 text-xs font-medium ${
                         isNewSkuMode
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-600'
+                          ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                          : 'text-slate-600 dark:text-slate-400'
                       }`}
                     >
                       New Medicine SKU
@@ -820,7 +823,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
                   {!isNewSkuMode ? (
                     <div className="sm:col-span-4">
-                      <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                      <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                         Select Medicine
                       </label>
                       <select
@@ -828,7 +831,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                         onChange={(e) =>
                           populateLineFromInventoryItem(Number(e.target.value))
                         }
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                       >
                         {items.map((it) => (
                           <option key={it.id} value={it.id}>
@@ -840,7 +843,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   ) : (
                     <>
                       <div className="sm:col-span-3">
-                        <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                        <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                           New Medicine Name *
                         </label>
                         <input
@@ -848,22 +851,22 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                           value={lineName}
                           onChange={(e) => setLineName(e.target.value)}
                           placeholder="e.g. Zestril 10mg (28s)"
-                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-[#0D7A5F] focus:outline-none"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                         />
                       </div>
                       <div className="sm:col-span-1">
-                        <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                        <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                           Unit
                         </label>
                         <input
                           type="text"
                           value={lineUnit}
                           onChange={(e) => setLineUnit(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs focus:border-[#0D7A5F] focus:outline-none"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                         />
                       </div>
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                        <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                           Barcode (optional)
                         </label>
                         <input
@@ -871,11 +874,11 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                           value={lineBarcode}
                           onChange={(e) => setLineBarcode(e.target.value)}
                           placeholder="Auto if blank"
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                         />
                       </div>
                       <div className="sm:col-span-2">
-                        <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                        <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                           Category
                         </label>
                         <input
@@ -883,14 +886,14 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                           value={lineCategory}
                           onChange={(e) => setLineCategory(e.target.value)}
                           placeholder="General"
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs focus:border-[#0D7A5F] focus:outline-none"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                         />
                       </div>
                     </>
                   )}
 
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                       1. Unit in Box
                     </label>
                     <input
@@ -899,12 +902,12 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       step={1}
                       value={lineUnitsPerBox}
                       onChange={(e) => setLineUnitsPerBox(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                       2. Box Cost (PKR)
                     </label>
                     <input
@@ -913,12 +916,12 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       step="0.01"
                       value={lineBoxCost}
                       onChange={(e) => setLineBoxCost(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                       3. Box Selling (PKR)
                     </label>
                     <input
@@ -927,12 +930,12 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       step="0.01"
                       value={lineBoxSelling}
                       onChange={(e) => setLineBoxSelling(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                       Qty Received ({lineUnit || 'Units'})
                     </label>
                     <input
@@ -940,44 +943,44 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                       min={1}
                       value={lineQty}
                       onChange={(e) => setLineQty(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                       Batch #
                     </label>
                     <input
                       type="text"
                       value={lineBatch}
                       onChange={(e) => setLineBatch(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-600 dark:text-slate-400">
                       Expiry
                     </label>
                     <input
                       type="date"
                       value={lineExpiry}
                       onChange={(e) => setLineExpiry(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 font-mono-tabular text-xs focus:border-[#0D7A5F] focus:outline-none"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     />
                   </div>
 
-                  <div className="sm:col-span-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-2 text-[11px]">
-                    <span className="text-slate-600">
+                  <div className="sm:col-span-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-2 text-[11px] dark:border-slate-700">
+                    <span className="text-slate-600 dark:text-slate-400">
                       Auto Unit Cost:{' '}
-                      <strong className="font-mono-tabular text-slate-900">
+                      <strong className="font-mono-tabular text-slate-900 dark:text-slate-100">
                         PKR {computedUnitCost.toFixed(2)}
                       </strong>
                     </span>
-                    <span className="text-slate-600">
+                    <span className="text-slate-600 dark:text-slate-400">
                       Auto Unit Selling:{' '}
-                      <strong className="font-mono-tabular text-[#0D7A5F]">
+                      <strong className="font-mono-tabular text-[#0D7A5F] dark:text-emerald-400">
                         PKR {computedUnitSelling.toFixed(2)} / {lineUnit || 'Unit'}
                       </strong>
                     </span>
@@ -988,7 +991,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={handleAddDraftLine}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     <span>Add Line to Bill</span>
@@ -998,9 +1001,9 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
               {/* Draft Lines Table */}
               {draftLines.length > 0 && (
-                <div className="overflow-hidden rounded-lg border border-slate-200">
+                <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
                   <table className="w-full text-left text-xs">
-                    <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600">
+                    <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                       <tr>
                         <th className="px-3 py-2">Medicine</th>
                         <th className="px-3 py-2">Batch / Exp</th>
@@ -1010,22 +1013,22 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                         <th className="px-3 py-2 text-right"></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {draftLines.map((line, idx) => (
                         <tr key={`${line.itemName}-${idx}`}>
-                          <td className="px-3 py-2 font-medium text-slate-900">
+                          <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">
                             {line.itemName}
                           </td>
-                          <td className="px-3 py-2 font-mono-tabular text-slate-500">
+                          <td className="px-3 py-2 font-mono-tabular text-slate-500 dark:text-slate-400">
                             {line.batchNumber || '—'} · {line.expiryDate}
                           </td>
-                          <td className="px-3 py-2 text-right font-mono-tabular">
+                          <td className="px-3 py-2 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
                             {line.quantity}
                           </td>
-                          <td className="px-3 py-2 text-right font-mono-tabular">
+                          <td className="px-3 py-2 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
                             {line.unitCost.toFixed(2)}
                           </td>
-                          <td className="px-3 py-2 text-right font-mono-tabular font-semibold">
+                          <td className="px-3 py-2 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                             {(line.unitCost * line.quantity).toFixed(2)}
                           </td>
                           <td className="px-3 py-2 text-right">
@@ -1036,7 +1039,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                                   prev.filter((_, i) => i !== idx),
                                 )
                               }
-                              className="rounded p-1 text-slate-400 hover:text-red-600"
+                              className="rounded p-1 text-slate-400 hover:text-red-600 dark:text-slate-500 dark:hover:text-red-400"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1049,9 +1052,9 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               )}
 
               {/* Payment & Totals */}
-              <div className="grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 sm:grid-cols-3 dark:border-slate-800">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-700">
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                     Payment Mode
                   </label>
                   <select
@@ -1059,7 +1062,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     onChange={(e) =>
                       handlePaymentModeChange(e.target.value as PaymentMode)
                     }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#0D7A5F] focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     <option value="Credit/Party Ledger">
                       Credit/Supplier Ledger
@@ -1070,7 +1073,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-700">
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                     Paid Amount (PKR)
                   </label>
                   <input
@@ -1080,18 +1083,18 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     step="0.01"
                     value={paidAmountInput}
                     onChange={(e) => setPaidAmountInput(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-sm focus:border-[#0D7A5F] focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
 
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs">
-                  <div className="flex justify-between text-slate-600">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/60">
+                  <div className="flex justify-between text-slate-600 dark:text-slate-300">
                     <span>Total Bill</span>
-                    <span className="font-mono-tabular font-bold text-slate-900">
+                    <span className="font-mono-tabular font-bold text-slate-900 dark:text-slate-100">
                       PKR {draftTotalAmount.toFixed(2)}
                     </span>
                   </div>
-                  <div className="mt-1 flex justify-between text-amber-800">
+                  <div className="mt-1 flex justify-between text-amber-800 dark:text-amber-400">
                     <span>Added to To Pay</span>
                     <span className="font-mono-tabular font-semibold">
                       PKR {draftBalanceDue.toFixed(2)}
@@ -1101,11 +1104,11 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-6 py-3.5">
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-6 py-3.5 dark:border-slate-800 dark:bg-slate-800/60">
               <button
                 type="button"
                 onClick={() => setIsPurchaseModalOpen(false)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               >
                 Cancel
               </button>
@@ -1123,29 +1126,29 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
       {/* Add Supplier Modal */}
       {isSupplierModalOpen && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4 dark:bg-black/70"
           role="dialog"
           aria-modal="true"
         >
           <form
             onSubmit={handleCreateSupplier}
-            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl"
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h3 className="text-base font-semibold text-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-800">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 Add Pharmaceutical Supplier
               </h3>
               <button
                 type="button"
                 onClick={() => setIsSupplierModalOpen(false)}
-                className="rounded p-1 text-slate-500 hover:bg-slate-100"
+                className="rounded p-1 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="mt-4 space-y-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                   Distributor / Company Name
                 </label>
                 <input
@@ -1154,11 +1157,11 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   value={newSupName}
                   onChange={(e) => setNewSupName(e.target.value)}
                   placeholder="e.g. UDL Distribution Lahore"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-[#0D7A5F] focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                   Contact Phone
                 </label>
                 <input
@@ -1166,11 +1169,11 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   value={newSupPhone}
                   onChange={(e) => setNewSupPhone(e.target.value)}
                   placeholder="042-XXXXXXXX"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-sm focus:border-[#0D7A5F] focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                   Opening To Pay Balance (PKR)
                 </label>
                 <input
@@ -1178,7 +1181,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                   min={0}
                   value={newSupBalance}
                   onChange={(e) => setNewSupBalance(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-sm focus:border-[#0D7A5F] focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
             </div>
@@ -1186,7 +1189,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => setIsSupplierModalOpen(false)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               >
                 Cancel
               </button>
@@ -1204,25 +1207,25 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
       {/* Settle Supplier Payable Modal */}
       {settleTarget && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 dark:bg-black/70"
           role="dialog"
           aria-modal="true"
         >
           <form
             onSubmit={handleSettleSubmit}
-            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-xl"
+            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900"
           >
-            <h3 className="text-base font-semibold text-slate-900">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               Record Supplier Payment
             </h3>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {settleTarget.name} · Current To Pay: PKR{' '}
-              <span className="font-mono-tabular font-semibold">
+              <span className="font-mono-tabular font-semibold text-slate-700 dark:text-slate-200">
                 {settleTarget.balance.toFixed(2)}
               </span>
             </p>
             <div className="mt-4">
-              <label className="mb-1 block text-xs font-medium text-slate-700">
+              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Payment Amount (PKR)
               </label>
               <input
@@ -1233,14 +1236,14 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                 step="0.01"
                 value={settleAmount}
                 onChange={(e) => setSettleAmount(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-sm focus:border-[#0D7A5F] focus:outline-none"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setSettleTarget(null)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               >
                 Cancel
               </button>

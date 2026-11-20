@@ -4,6 +4,7 @@ import modelsRaw from '../../flutter_app/lib/models/pharmacy_models.dart?raw';
 import dbHelperRaw from '../../flutter_app/lib/database/db_helper.dart?raw';
 import posScreenRaw from '../../flutter_app/lib/screens/pos_screen.dart?raw';
 import printerSettingsRaw from '../../flutter_app/lib/screens/printer_settings_screen.dart?raw';
+import settingsScreenRaw from '../../flutter_app/lib/screens/settings_screen.dart?raw';
 import printerServiceRaw from '../../flutter_app/lib/services/printer_service.dart?raw';
 import pdfInvoiceServiceRaw from '../../flutter_app/lib/services/pdf_invoice_service.dart?raw';
 
@@ -22,7 +23,7 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
     path: 'lib/database/db_helper.dart',
     title: 'SQLite Database Helper',
     summary:
-      'Singleton SQLite schema (items, parties, sales, sale_items), CRUD methods, barcode lookup, and transactional inventory deduction.',
+      'Singleton SQLite schema (items, parties, sales, sale_items, app_settings), CRUD methods, barcode lookup, transactional deduction, and DB backup.',
     language: 'dart',
     content: dbHelperRaw,
   },
@@ -31,7 +32,7 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
     path: 'lib/models/pharmacy_models.dart',
     title: 'Pharmacy Domain Models',
     summary:
-      'Immutable models and SQLite mappers for PharmacyItem, Party, CartLine, SaleRecord, SaleItemRecord, and PaymentMode.',
+      'Immutable models and SQLite mappers for PharmacyItem, Party, CartLine, SaleRecord, SaleItemRecord, PharmacySettings, and PaymentMode.',
     language: 'dart',
     content: modelsRaw,
   },
@@ -43,6 +44,15 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
       'Responsive catalog grid, barcode scanner field, real-time cart, item & bill discounts, accurate net profit tracking, and payment selector.',
     language: 'dart',
     content: posScreenRaw,
+  },
+  {
+    id: 'settings_screen',
+    path: 'lib/screens/settings_screen.dart',
+    title: 'Pharmacy & Counter Settings',
+    summary:
+      'SQLite-persisted pharmacy/receipt details, thermal printer & USB barcode preferences, threshold/role controls, DB backup export, and safe reset.',
+    language: 'dart',
+    content: settingsScreenRaw,
   },
   {
     id: 'printer_service',
@@ -75,7 +85,7 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
     id: 'main',
     path: 'lib/main.dart',
     title: 'Flutter App Entry Point',
-    summary: 'Material 3 app bootstrap and bottom navigation shell.',
+    summary: 'Material 3 app bootstrap, navigation drawer, and bottom navigation shell.',
     language: 'dart',
     content: mainDartRaw,
   },
