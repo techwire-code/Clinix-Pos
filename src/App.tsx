@@ -32,6 +32,7 @@ import {
   PurchaseDraftLine,
   PurchaseRecord,
   SaleRecord,
+  SupplierPaymentEntry,
 } from './types/pharmacy';
 import {
   addPharmacyUser,
@@ -52,8 +53,10 @@ import {
   loadPurchases,
   loadSales,
   loadSettings,
+  loadSupplierPayments,
   loadUsers,
   recordPartySettlementTransaction,
+  recordSupplierPaymentTransaction,
   resetDemoDatabase,
   resetSettingsToDefaults,
   saveExpenses,
@@ -203,6 +206,9 @@ export default function App() {
   const [purchases, setPurchases] = useState<PurchaseRecord[]>(() =>
     loadPurchases(),
   );
+  const [supplierPayments, setSupplierPayments] = useState<
+    SupplierPaymentEntry[]
+  >(() => loadSupplierPayments());
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(() =>
     loadExpenses(),
   );
@@ -385,13 +391,17 @@ export default function App() {
     if (isLimitedUser) return;
     const result = executePurchaseTransaction({
       ...params,
+      createdBy: session?.username,
+      createdByName: session?.displayName,
       currentItems: items,
       currentParties: parties,
       currentPurchases: purchases,
+      currentSupplierPayments: supplierPayments,
     });
     setItems(result.updatedItems);
     setParties(result.updatedParties);
     setPurchases(result.updatedPurchases);
+    setSupplierPayments(result.updatedSupplierPayments);
   };
 
   const handleAddSupplier = (payload: {
@@ -539,9 +549,32 @@ export default function App() {
       notes?: string;
       reference?: string;
       collectedAt?: string;
+      purchaseId?: number | null;
     },
   ) => {
     if (isLimitedUser) return;
+    const targetParty = parties.find((p) => p.id === partyId);
+    if (targetParty?.type === 'supplier') {
+      const result = recordSupplierPaymentTransaction({
+        partyId,
+        amount,
+        purchaseId: details?.purchaseId ?? null,
+        paymentMode: details?.paymentMode ?? 'Cash',
+        notes: details?.notes,
+        reference: details?.reference,
+        paidAt: details?.collectedAt,
+        createdBy: session?.username,
+        createdByName: session?.displayName,
+        currentParties: parties,
+        currentPurchases: purchases,
+        currentSupplierPayments: supplierPayments,
+      });
+      setParties(result.updatedParties);
+      setPurchases(result.updatedPurchases);
+      setSupplierPayments(result.updatedSupplierPayments);
+      return;
+    }
+
     const result = recordPartySettlementTransaction({
       partyId,
       amount,
@@ -674,6 +707,7 @@ export default function App() {
     setParties(restored.parties);
     setSales(restored.sales);
     setPurchases(restored.purchases);
+    setSupplierPayments(restored.supplierPayments);
     setExpenses(restored.expenses);
     setKhataEntries(restored.khataEntries);
     setPrinterConfig(restored.printer);
@@ -1014,6 +1048,7 @@ export default function App() {
               items={items}
               parties={parties}
               purchases={purchases}
+              supplierPayments={supplierPayments}
               settings={settings}
               onCompletePurchase={handleCompletePurchase}
               onAddSupplier={handleAddSupplier}
@@ -1025,6 +1060,8 @@ export default function App() {
             <PartiesWorkspace
               parties={parties}
               sales={sales}
+              purchases={purchases}
+              supplierPayments={supplierPayments}
               items={items}
               khataEntries={khataEntries}
               settings={settings}

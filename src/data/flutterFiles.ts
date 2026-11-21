@@ -5,6 +5,7 @@ import dbHelperRaw from '../../flutter_app/lib/database/db_helper.dart?raw';
 import posScreenRaw from '../../flutter_app/lib/screens/pos_screen.dart?raw';
 import partiesScreenRaw from '../../flutter_app/lib/screens/parties_screen.dart?raw';
 import khataStatementRaw from '../../flutter_app/lib/screens/khata_statement_screen.dart?raw';
+import supplierLedgerRaw from '../../flutter_app/lib/screens/supplier_ledger_screen.dart?raw';
 import editCreditReceiptRaw from '../../flutter_app/lib/screens/edit_credit_receipt_dialog.dart?raw';
 import printerSettingsRaw from '../../flutter_app/lib/screens/printer_settings_screen.dart?raw';
 import settingsScreenRaw from '../../flutter_app/lib/screens/settings_screen.dart?raw';
@@ -54,7 +55,7 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
     path: 'lib/screens/parties_screen.dart',
     title: 'Parties & Khata Ledger',
     summary:
-      'Customer & supplier ledger management with date-wise Khata drilldown and collection settlement.',
+      'Customer & supplier ledger management with date-wise Khata drilldown, supplier bills ledger, and bill-allocated payment settlement.',
     language: 'dart',
     content: partiesScreenRaw,
   },
@@ -66,6 +67,15 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
       'Date-wise Khata timeline with running balances, itemized bills, WhatsApp/PDF export, and audited Edit Receipt workflow.',
     language: 'dart',
     content: khataStatementRaw,
+  },
+  {
+    id: 'supplier_ledger_screen',
+    path: 'lib/screens/supplier_ledger_screen.dart',
+    title: 'Supplier Bills & Payment Ledger',
+    summary:
+      'Bill-wise supplier purchase tracking (Unpaid / Partially Paid / Paid), itemized medicines, payment history, and bill-allocated payments.',
+    language: 'dart',
+    content: supplierLedgerRaw,
   },
   {
     id: 'edit_credit_receipt_dialog',

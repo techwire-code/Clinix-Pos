@@ -4,6 +4,7 @@ import '../database/db_helper.dart';
 import '../models/pharmacy_models.dart';
 import '../utils/currency_formatter.dart';
 import 'khata_statement_screen.dart';
+import 'supplier_ledger_screen.dart';
 
 class PartiesScreen extends StatefulWidget {
   final PharmacySettings settings;
@@ -59,6 +60,20 @@ class _PartiesScreenState extends State<PartiesScreen> {
           party: party,
           settings: widget.settings,
           currentUser: widget.currentUser,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _loadParties();
+    }
+  }
+
+  Future<void> _openSupplierLedger(Party party) async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => SupplierLedgerScreen(
+          supplier: party,
+          settings: widget.settings,
         ),
       ),
     );
@@ -176,6 +191,13 @@ class _PartiesScreenState extends State<PartiesScreen> {
 
   Future<void> _openSettleDialog(Party party) async {
     if (party.id == null || party.balance <= 0) return;
+    final bool isSupplier = party.type == PartyType.supplier;
+    final List<PurchaseRecord> openBills = isSupplier
+        ? await DatabaseHelper.instance.getSupplierUnpaidBills(party.id!)
+        : const [];
+    if (!mounted) return;
+
+    int? selectedBillId;
     final amountCtrl = TextEditingController(
       text: party.balance.toStringAsFixed(widget.settings.decimalDigits),
     );
@@ -183,15 +205,16 @@ class _PartiesScreenState extends State<PartiesScreen> {
     final notesCtrl = TextEditingController();
     String selectedMethod = 'Cash';
     DateTime selectedDate = DateTime.now();
+    String? errorMsg;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: Text(
-            party.type == PartyType.customer
-                ? 'Record Collection (Vasooli)'
-                : 'Record Supplier Payment',
+            isSupplier
+                ? 'Record Supplier Payment'
+                : 'Record Collection (Vasooli)',
           ),
           content: SingleChildScrollView(
             child: Column(
@@ -202,11 +225,79 @@ class _PartiesScreenState extends State<PartiesScreen> {
                   '${party.name}\nCurrent Balance: ${_fmt(party.balance)}',
                   style: TextStyle(fontSize: 12.5, color: Colors.grey.shade700),
                 ),
+                if (errorMsg != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Text(
+                      errorMsg!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.red.shade800,
+                      ),
+                    ),
+                  ),
+                ],
+                if (isSupplier && openBills.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int?>(
+                    value: selectedBillId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Allocate to Purchase Bill (Optional)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      DropdownMenuItem<int?>(
+                        value: null,
+                        child: Text(
+                          'General Supplier Payable (${_fmt(party.balance)})',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      ...openBills.map(
+                        (b) => DropdownMenuItem<int?>(
+                          value: b.id,
+                          child: Text(
+                            '${b.purchaseNumber} (${b.supplierInvoiceNo}) · Due ${_fmt(b.balanceDue)}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                    onChanged: (val) {
+                      setDialogState(() {
+                        selectedBillId = val;
+                        errorMsg = null;
+                        if (val == null) {
+                          amountCtrl.text = party.balance
+                              .toStringAsFixed(widget.settings.decimalDigits);
+                        } else {
+                          final bill = openBills.firstWhere((b) => b.id == val);
+                          amountCtrl.text = bill.balanceDue
+                              .toStringAsFixed(widget.settings.decimalDigits);
+                        }
+                      });
+                    },
+                  ),
+                ],
                 const SizedBox(height: 12),
                 TextField(
                   controller: amountCtrl,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) {
+                    if (errorMsg != null) {
+                      setDialogState(() => errorMsg = null);
+                    }
+                  },
                   decoration: InputDecoration(
                     labelText:
                         'Amount (${CurrencyFormatter.unitLabel(widget.settings)})',
@@ -296,7 +387,27 @@ class _PartiesScreenState extends State<PartiesScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
+              onPressed: () {
+                final amt = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+                if (amt <= 0) {
+                  setDialogState(() {
+                    errorMsg = 'Enter a valid amount greater than zero.';
+                  });
+                  return;
+                }
+                final maxAllowed = (isSupplier && selectedBillId != null)
+                    ? openBills
+                        .firstWhere((b) => b.id == selectedBillId)
+                        .balanceDue
+                    : party.balance;
+                if (amt > maxAllowed + 0.01) {
+                  setDialogState(() {
+                    errorMsg = 'Amount cannot exceed ${_fmt(maxAllowed)}.';
+                  });
+                  return;
+                }
+                Navigator.of(ctx).pop(true);
+              },
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF0D7A5F),
               ),
@@ -317,6 +428,7 @@ class _PartiesScreenState extends State<PartiesScreen> {
           reference: refCtrl.text.trim(),
           notes: notesCtrl.text.trim(),
           collectedAt: selectedDate,
+          purchaseId: selectedBillId,
         );
         await _loadParties();
       }
@@ -447,7 +559,9 @@ class _PartiesScreenState extends State<PartiesScreen> {
                           ),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(12),
-                            onTap: isCustomer ? () => _openKhata(party) : null,
+                            onTap: isCustomer
+                                ? () => _openKhata(party)
+                                : () => _openSupplierLedger(party),
                             child: Padding(
                               padding: const EdgeInsets.all(14),
                               child: Column(
@@ -519,8 +633,18 @@ class _PartiesScreenState extends State<PartiesScreen> {
                                             size: 16,
                                           ),
                                           label: const Text('View Khata'),
+                                        )
+                                      else
+                                        OutlinedButton.icon(
+                                          onPressed: () =>
+                                              _openSupplierLedger(party),
+                                          icon: const Icon(
+                                            Icons.inventory_2_outlined,
+                                            size: 16,
+                                          ),
+                                          label: const Text('View Bills'),
                                         ),
-                                      if (isCustomer && party.balance > 0)
+                                      if (party.balance > 0)
                                         const SizedBox(width: 8),
                                       if (party.balance > 0)
                                         FilledButton(

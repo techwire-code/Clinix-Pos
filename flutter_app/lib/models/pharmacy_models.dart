@@ -640,6 +640,21 @@ class PurchaseLine {
   double get lineTotal => unitCost * quantity;
 }
 
+enum PurchasePaymentStatus { unpaid, partiallyPaid, paid }
+
+extension PurchasePaymentStatusX on PurchasePaymentStatus {
+  String get label {
+    switch (this) {
+      case PurchasePaymentStatus.unpaid:
+        return 'Unpaid';
+      case PurchasePaymentStatus.partiallyPaid:
+        return 'Partially Paid';
+      case PurchasePaymentStatus.paid:
+        return 'Paid';
+    }
+  }
+}
+
 class PurchaseRecord {
   final int? id;
   final String purchaseNumber;
@@ -664,6 +679,38 @@ class PurchaseRecord {
     required this.paymentMode,
     required this.createdAt,
   });
+
+  PurchasePaymentStatus get paymentStatus {
+    if (balanceDue <= 0.005) return PurchasePaymentStatus.paid;
+    if (paidAmount > 0.005) return PurchasePaymentStatus.partiallyPaid;
+    return PurchasePaymentStatus.unpaid;
+  }
+
+  PurchaseRecord copyWith({
+    int? id,
+    String? purchaseNumber,
+    String? supplierInvoiceNo,
+    int? supplierId,
+    String? supplierName,
+    double? totalAmount,
+    double? paidAmount,
+    double? balanceDue,
+    PaymentMode? paymentMode,
+    String? createdAt,
+  }) {
+    return PurchaseRecord(
+      id: id ?? this.id,
+      purchaseNumber: purchaseNumber ?? this.purchaseNumber,
+      supplierInvoiceNo: supplierInvoiceNo ?? this.supplierInvoiceNo,
+      supplierId: supplierId ?? this.supplierId,
+      supplierName: supplierName ?? this.supplierName,
+      totalAmount: totalAmount ?? this.totalAmount,
+      paidAmount: paidAmount ?? this.paidAmount,
+      balanceDue: balanceDue ?? this.balanceDue,
+      paymentMode: paymentMode ?? this.paymentMode,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
 
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
@@ -1293,5 +1340,104 @@ class CustomerKhataStatement {
     required this.currentBalanceDue,
   });
 }
+
+class SupplierPaymentEntry {
+  final int? id;
+  final int partyId;
+  final int? purchaseId;
+  final String? purchaseNumber;
+  final String? supplierInvoiceNo;
+  final double amount;
+  final String paymentMode;
+  final String? reference;
+  final String? notes;
+  final String createdAt;
+
+  const SupplierPaymentEntry({
+    this.id,
+    required this.partyId,
+    this.purchaseId,
+    this.purchaseNumber,
+    this.supplierInvoiceNo,
+    required this.amount,
+    this.paymentMode = 'Cash',
+    this.reference,
+    this.notes,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'party_id': partyId,
+        'purchase_id': purchaseId,
+        'purchase_number': purchaseNumber,
+        'supplier_invoice_no': supplierInvoiceNo,
+        'amount': amount,
+        'payment_mode': paymentMode,
+        'reference': reference,
+        'notes': notes,
+        'created_at': createdAt,
+      };
+
+  factory SupplierPaymentEntry.fromMap(Map<String, dynamic> map) =>
+      SupplierPaymentEntry(
+        id: (map['id'] as num?)?.toInt(),
+        partyId: (map['party_id'] as num).toInt(),
+        purchaseId: (map['purchase_id'] as num?)?.toInt(),
+        purchaseNumber: map['purchase_number'] as String?,
+        supplierInvoiceNo: map['supplier_invoice_no'] as String?,
+        amount: (map['amount'] as num?)?.toDouble() ?? 0.0,
+        paymentMode: (map['payment_mode'] as String?) ?? 'Cash',
+        reference: map['reference'] as String?,
+        notes: map['notes'] as String?,
+        createdAt:
+            (map['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+      );
+}
+
+class SupplierBillLedgerRow {
+  final PurchaseRecord purchase;
+  final PurchasePaymentStatus status;
+  final List<PurchaseItemRecord> items;
+  final List<SupplierPaymentEntry> allocatedPayments;
+
+  const SupplierBillLedgerRow({
+    required this.purchase,
+    required this.status,
+    this.items = const [],
+    this.allocatedPayments = const [],
+  });
+}
+
+class SupplierLedgerStatement {
+  final Party party;
+  final List<SupplierBillLedgerRow> bills;
+  final List<SupplierPaymentEntry> payments;
+  final double totalPurchased;
+  final double totalPaidOnBills;
+  final double totalBillRemaining;
+  final double totalPaymentsRecorded;
+  final double unallocatedOrOpeningBalance;
+  final int unpaidBillCount;
+  final int partialBillCount;
+  final int paidBillCount;
+  final double currentBalanceDue;
+
+  const SupplierLedgerStatement({
+    required this.party,
+    required this.bills,
+    required this.payments,
+    required this.totalPurchased,
+    required this.totalPaidOnBills,
+    required this.totalBillRemaining,
+    required this.totalPaymentsRecorded,
+    required this.unallocatedOrOpeningBalance,
+    required this.unpaidBillCount,
+    required this.partialBillCount,
+    required this.paidBillCount,
+    required this.currentBalanceDue,
+  });
+}
+
 
 

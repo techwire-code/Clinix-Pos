@@ -15,18 +15,21 @@ import {
   PharmacySettings,
   PurchaseDraftLine,
   PurchaseRecord,
+  SupplierPaymentEntry,
 } from '../types/pharmacy';
 import {
   calculateUnitPrice,
   formatDateBySettings,
   formatMoney,
   getCurrencyLabel,
+  getPurchasePaymentStatus,
 } from '../services/localDb';
 
 interface PurchasesWorkspaceProps {
   items: PharmacyItem[];
   parties: Party[];
   purchases: PurchaseRecord[];
+  supplierPayments?: SupplierPaymentEntry[];
   settings?: PharmacySettings;
   onCompletePurchase: (params: {
     supplier: Party;
@@ -40,7 +43,17 @@ interface PurchasesWorkspaceProps {
     phone: string;
     balance: number;
   }) => Party;
-  onSettleSupplierBalance: (supplierId: number, amount: number) => void;
+  onSettleSupplierBalance: (
+    supplierId: number,
+    amount: number,
+    details?: {
+      paymentMode?: string;
+      notes?: string;
+      reference?: string;
+      collectedAt?: string;
+      purchaseId?: number | null;
+    },
+  ) => void;
 }
 
 type SubView = 'bills' | 'suppliers';
@@ -49,6 +62,7 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
   items,
   parties,
   purchases,
+  supplierPayments = [],
   settings,
   onCompletePurchase,
   onAddSupplier,
@@ -106,6 +120,14 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
 
   const [settleTarget, setSettleTarget] = useState<Party | null>(null);
   const [settleAmount, setSettleAmount] = useState('');
+  const [settleMethod, setSettleMethod] = useState('Cash');
+  const [settleDate, setSettleDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [settleReference, setSettleReference] = useState('');
+  const [settleNotes, setSettleNotes] = useState('');
+  const [settlePurchaseId, setSettlePurchaseId] = useState<number | ''>('');
+  const [settleError, setSettleError] = useState<string | null>(null);
 
   const suppliers = useMemo(
     () => parties.filter((p) => p.type === 'supplier'),
@@ -148,16 +170,73 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
   }, [suppliers, search]);
 
   const supplierVolumeMap = useMemo(() => {
-    const map = new Map<number, { count: number; total: number }>();
+    const map = new Map<
+      number,
+      { count: number; total: number; partialCount: number; unpaidCount: number }
+    >();
     for (const p of purchases) {
-      const prev = map.get(p.supplierId) ?? { count: 0, total: 0 };
+      const prev = map.get(p.supplierId) ?? {
+        count: 0,
+        total: 0,
+        partialCount: 0,
+        unpaidCount: 0,
+      };
+      const st = getPurchasePaymentStatus(p);
       map.set(p.supplierId, {
         count: prev.count + 1,
         total: prev.total + p.totalAmount,
+        partialCount: prev.partialCount + (st === 'Partially Paid' ? 1 : 0),
+        unpaidCount: prev.unpaidCount + (st === 'Unpaid' ? 1 : 0),
       });
     }
     return map;
   }, [purchases]);
+
+  const settleTargetOpenBills = useMemo(() => {
+    if (!settleTarget) return [];
+    return purchases
+      .filter((p) => p.supplierId === settleTarget.id && p.balanceDue > 0.005)
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+  }, [settleTarget, purchases]);
+
+  const selectedSettleBill = useMemo(() => {
+    if (settlePurchaseId === '' || !settleTarget) return null;
+    return (
+      settleTargetOpenBills.find((b) => b.id === Number(settlePurchaseId)) ??
+      null
+    );
+  }, [settlePurchaseId, settleTarget, settleTargetOpenBills]);
+
+  const openSettleModal = (
+    supplier: Party,
+    preselectedPurchaseId?: number,
+  ) => {
+    setSettleTarget(supplier);
+    setSettleMethod('Cash');
+    setSettleDate(new Date().toISOString().slice(0, 10));
+    setSettleReference('');
+    setSettleNotes('');
+    setSettleError(null);
+    if (preselectedPurchaseId) {
+      const targetBill = purchases.find(
+        (p) =>
+          p.id === preselectedPurchaseId &&
+          p.supplierId === supplier.id &&
+          p.balanceDue > 0.005,
+      );
+      if (targetBill) {
+        setSettlePurchaseId(targetBill.id);
+        setSettleAmount(String(targetBill.balanceDue));
+        return;
+      }
+    }
+    setSettlePurchaseId('');
+    setSettleAmount(String(supplier.balance));
+  };
 
   const populateLineFromInventoryItem = (itemId: number) => {
     setSelectedItemId(itemId);
@@ -336,11 +415,37 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
     e.preventDefault();
     if (!settleTarget) return;
     const amt = Math.max(0, Number(settleAmount) || 0);
-    if (amt > 0) {
-      onSettleSupplierBalance(settleTarget.id, amt);
+    if (amt <= 0) {
+      setSettleError('Enter a payment amount greater than zero.');
+      return;
     }
-    setSettleTarget(null);
-    setSettleAmount('');
+    const maxAllowed = selectedSettleBill
+      ? selectedSettleBill.balanceDue
+      : settleTarget.balance;
+    if (amt > maxAllowed + 0.01) {
+      setSettleError(
+        `Amount cannot exceed ${formatMoney(maxAllowed, settings)}.`,
+      );
+      return;
+    }
+    try {
+      onSettleSupplierBalance(settleTarget.id, amt, {
+        paymentMode: settleMethod,
+        reference: settleReference.trim() || undefined,
+        notes: settleNotes.trim() || undefined,
+        collectedAt: settleDate,
+        purchaseId:
+          settlePurchaseId === '' ? null : Number(settlePurchaseId),
+      });
+      setSettleTarget(null);
+      setSettleAmount('');
+      setSettlePurchaseId('');
+      setSettleError(null);
+    } catch (err) {
+      setSettleError(
+        err instanceof Error ? err.message : 'Unable to record supplier payment.',
+      );
+    }
   };
 
   return (
@@ -469,10 +574,10 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                 <tr>
                   <th className="px-4 py-3">Purchase / Supplier Inv</th>
                   <th className="px-4 py-3">Supplier</th>
-                  <th className="px-4 py-3">Payment Mode</th>
+                  <th className="px-4 py-3">Payment Status</th>
                   <th className="px-4 py-3 text-right">Total Bill</th>
                   <th className="px-4 py-3 text-right">Paid</th>
-                  <th className="px-4 py-3 text-right">Balance Due</th>
+                  <th className="px-4 py-3 text-right">Remaining Due</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -489,6 +594,17 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                 ) : (
                   filteredPurchases.map((pur) => {
                     const isExpanded = expandedPurchaseId === pur.id;
+                    const billStatus = getPurchasePaymentStatus(pur);
+                    const billPayments = supplierPayments.filter(
+                      (pay) =>
+                        pay.partyId === pur.supplierId &&
+                        ((pur.id && pay.purchaseId === pur.id) ||
+                          (pur.purchaseNumber &&
+                            pay.purchaseNumber === pur.purchaseNumber)),
+                    );
+                    const billSupplier = suppliers.find(
+                      (s) => s.id === pur.supplierId,
+                    );
                     return (
                       <React.Fragment key={pur.id}>
                         <tr
@@ -521,26 +637,44 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                             </p>
                             <p className="text-[11px] text-slate-500 dark:text-slate-400">
                               {pur.items.length}{' '}
-                              {pur.items.length === 1 ? 'line' : 'lines'}
+                              {pur.items.length === 1 ? 'line' : 'lines'} ·{' '}
+                              {pur.paymentMode}
                             </p>
                           </td>
-                          <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
-                            {pur.paymentMode}
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-flex rounded px-2 py-0.5 text-[11px] font-semibold ${
+                                billStatus === 'Paid'
+                                  ? 'bg-emerald-50 text-[#0D7A5F] dark:bg-emerald-950/60 dark:text-emerald-300'
+                                  : billStatus === 'Partially Paid'
+                                    ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                    : 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                              }`}
+                            >
+                              {billStatus}
+                            </span>
+                            <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                              {billStatus === 'Partially Paid'
+                                ? 'Partial payment made'
+                                : billStatus === 'Unpaid'
+                                  ? 'No payment yet'
+                                  : 'Settled in full'}
+                            </p>
                           </td>
                           <td className="px-4 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
                             {formatMoney(pur.totalAmount, settings)}
                           </td>
-                          <td className="px-4 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
+                          <td className="px-4 py-3 text-right font-mono-tabular text-[#0D7A5F] dark:text-emerald-400">
                             {formatMoney(pur.paidAmount, settings)}
                           </td>
                           <td
                             className={`px-4 py-3 text-right font-mono-tabular font-semibold ${
-                              pur.balanceDue > 0
+                              pur.balanceDue > 0.005
                                 ? 'text-amber-700 dark:text-amber-400'
                                 : 'text-[#0D7A5F] dark:text-emerald-400'
                             }`}
                           >
-                            {pur.balanceDue > 0
+                            {pur.balanceDue > 0.005
                               ? formatMoney(pur.balanceDue, settings)
                               : 'Paid'}
                           </td>
@@ -592,6 +726,48 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                                   ))}
                                 </tbody>
                               </table>
+
+                              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-2.5 dark:border-slate-800">
+                                <div className="space-y-1 text-[11px]">
+                                  <p className="font-semibold text-slate-700 dark:text-slate-300">
+                                    Payments Applied to {pur.purchaseNumber} ({billPayments.length}):
+                                  </p>
+                                  {billPayments.length === 0 ? (
+                                    <p className="text-slate-500 dark:text-slate-400">
+                                      No payments recorded against this bill yet.
+                                    </p>
+                                  ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                      {billPayments.map((bp) => (
+                                        <span
+                                          key={bp.id}
+                                          className="rounded border border-slate-200 bg-white px-2 py-0.5 font-mono-tabular text-[11px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                                        >
+                                          {formatDateBySettings(bp.createdAt, settings)} ·{' '}
+                                          {bp.paymentMode} ·{' '}
+                                          <strong className="text-[#0D7A5F] dark:text-emerald-400">
+                                            {formatMoney(bp.amount, settings)}
+                                          </strong>
+                                          {bp.reference ? ` (${bp.reference})` : ''}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {billSupplier && pur.balanceDue > 0.005 && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openSettleModal(billSupplier, pur.id);
+                                    }}
+                                    className="rounded-lg bg-[#0D7A5F] px-3 py-1.5 text-xs font-semibold text-white whitespace-nowrap hover:bg-[#0A634D]"
+                                  >
+                                    Record Payment on This Bill
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         )}
@@ -633,14 +809,29 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                     const stats = supplierVolumeMap.get(sup.id) ?? {
                       count: 0,
                       total: 0,
+                      partialCount: 0,
+                      unpaidCount: 0,
                     };
                     return (
                       <tr
                         key={sup.id}
-                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
+                        onClick={() => {
+                          setSubView('bills');
+                          setSearch(sup.name);
+                        }}
+                        className="cursor-pointer hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
                       >
-                        <td className="px-5 py-3.5 font-semibold text-slate-900 dark:text-slate-100">
-                          {sup.name}
+                        <td className="px-5 py-3.5">
+                          <p className="font-semibold text-slate-900 dark:text-slate-100">
+                            {sup.name}
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {stats.partialCount > 0 || stats.unpaidCount > 0
+                              ? `${stats.partialCount} partial · ${stats.unpaidCount} unpaid`
+                              : stats.count > 0
+                                ? 'All purchase bills settled'
+                                : 'No bills yet'}
+                          </p>
                         </td>
                         <td className="px-5 py-3.5 font-mono-tabular text-slate-600 dark:text-slate-400">
                           {sup.phone || '—'}
@@ -664,7 +855,21 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                           <div className="inline-flex items-center gap-2">
                             <button
                               type="button"
-                              onClick={() => openPurchaseModal(sup.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSubView('bills');
+                                setSearch(sup.name);
+                              }}
+                              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 whitespace-nowrap hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                            >
+                              View Bills
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openPurchaseModal(sup.id);
+                              }}
                               className="rounded-lg bg-[#0D7A5F] px-2.5 py-1.5 text-xs font-semibold text-white whitespace-nowrap hover:bg-[#0A634D]"
                             >
                               New Purchase
@@ -672,13 +877,13 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
                             {sup.balance > 0 && (
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setSettleTarget(sup);
-                                  setSettleAmount(String(sup.balance));
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openSettleModal(sup);
                                 }}
                                 className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 whitespace-nowrap hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                               >
-                                Pay Balance
+                                Record Payment
                               </button>
                             )}
                           </div>
@@ -1220,36 +1425,153 @@ export const PurchasesWorkspace: React.FC<PurchasesWorkspaceProps> = ({
         >
           <form
             onSubmit={handleSettleSubmit}
-            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900"
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900"
           >
             <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               Record Supplier Payment
             </h3>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {settleTarget.name} · Current To Pay:{' '}
-              <span className="font-mono-tabular font-semibold text-slate-700 dark:text-slate-200">
+              <span className="font-mono-tabular font-semibold text-amber-700 dark:text-amber-400">
                 {formatMoney(settleTarget.balance, settings)}
               </span>
             </p>
-            <div className="mt-4">
-              <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                Payment Amount ({cur})
-              </label>
-              <input
-                required
-                type="number"
-                min={1}
-                max={settleTarget.balance}
-                step="0.01"
-                value={settleAmount}
-                onChange={(e) => setSettleAmount(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
+
+            {settleError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+                {settleError}
+              </div>
+            )}
+
+            <div className="mt-4 space-y-3">
+              {settleTargetOpenBills.length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Allocate to Purchase Bill (Optional)
+                  </label>
+                  <select
+                    value={settlePurchaseId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val) {
+                        setSettlePurchaseId('');
+                        setSettleAmount(String(settleTarget.balance));
+                      } else {
+                        const bid = Number(val);
+                        setSettlePurchaseId(bid);
+                        const bill = settleTargetOpenBills.find(
+                          (b) => b.id === bid,
+                        );
+                        if (bill) {
+                          setSettleAmount(String(bill.balanceDue));
+                        }
+                      }
+                      setSettleError(null);
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <option value="">
+                      General Supplier Payable ({formatMoney(settleTarget.balance, settings)})
+                    </option>
+                    {settleTargetOpenBills.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.purchaseNumber} (Inv: {b.supplierInvoiceNo}) · Due{' '}
+                        {formatMoney(b.balanceDue, settings)} ({getPurchasePaymentStatus(b)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Payment Amount ({cur})
+                </label>
+                <input
+                  required
+                  type="number"
+                  min={0.01}
+                  max={
+                    selectedSettleBill
+                      ? selectedSettleBill.balanceDue
+                      : settleTarget.balance
+                  }
+                  step="0.01"
+                  value={settleAmount}
+                  onChange={(e) => {
+                    setSettleAmount(e.target.value);
+                    setSettleError(null);
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Payment Method
+                  </label>
+                  <select
+                    value={settleMethod}
+                    onChange={(e) => setSettleMethod(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="JazzCash / EasyPaisa">
+                      JazzCash / EasyPaisa
+                    </option>
+                    <option value="Card">Card</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Payment Date
+                  </label>
+                  <input
+                    type="date"
+                    value={settleDate}
+                    onChange={(e) => setSettleDate(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Reference # (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={settleReference}
+                  onChange={(e) => setSettleReference(e.target.value)}
+                  placeholder="Cheque #, IBFT ref, receipt #..."
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Notes (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={settleNotes}
+                  onChange={(e) => setSettleNotes(e.target.value)}
+                  placeholder="Optional payment note"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
             </div>
+
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setSettleTarget(null)}
+                onClick={() => {
+                  setSettleTarget(null);
+                  setSettleError(null);
+                }}
                 className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               >
                 Cancel

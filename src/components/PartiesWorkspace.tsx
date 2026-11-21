@@ -26,19 +26,26 @@ import {
   PartyType,
   PharmacyItem,
   PharmacySettings,
+  PurchaseRecord,
   SaleRecord,
+  SupplierPaymentEntry,
 } from '../types/pharmacy';
 import {
   buildCustomerKhataShareText,
   buildCustomerKhataStatement,
+  buildSupplierLedgerShareText,
+  buildSupplierLedgerStatement,
   formatDateBySettings,
   formatMoney,
   getCurrencyLabel,
+  getPurchasePaymentStatus,
 } from '../services/localDb';
 
 interface PartiesWorkspaceProps {
   parties: Party[];
   sales: SaleRecord[];
+  purchases: PurchaseRecord[];
+  supplierPayments: SupplierPaymentEntry[];
   items: PharmacyItem[];
   khataEntries: KhataEntry[];
   settings?: PharmacySettings;
@@ -51,6 +58,7 @@ interface PartiesWorkspaceProps {
       notes?: string;
       reference?: string;
       collectedAt?: string;
+      purchaseId?: number | null;
     },
   ) => void;
   onOpenInvoiceModal?: (sale: SaleRecord) => void;
@@ -70,6 +78,8 @@ function toLocalYmd(date: Date): string {
 export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
   parties,
   sales,
+  purchases,
+  supplierPayments,
   items,
   khataEntries,
   settings,
@@ -84,13 +94,15 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
 
-  // Settle / Record Collection modal state
+  // Settle / Record Collection or Supplier Payment modal state
   const [settleTarget, setSettleTarget] = useState<Party | null>(null);
   const [settleAmount, setSettleAmount] = useState('');
   const [settleMethod, setSettleMethod] = useState('Cash');
   const [settleDate, setSettleDate] = useState(() => toLocalYmd(new Date()));
   const [settleReference, setSettleReference] = useState('');
   const [settleNotes, setSettleNotes] = useState('');
+  const [settlePurchaseId, setSettlePurchaseId] = useState<number | ''>('');
+  const [settleError, setSettleError] = useState<string | null>(null);
 
   // Add party modal state
   const [newName, setNewName] = useState('');
@@ -110,6 +122,20 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
   );
   const [expandAllBills, setExpandAllBills] = useState(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+
+  // Supplier Bills & Payment Ledger modal state
+  const [selectedSupplierPartyId, setSelectedSupplierPartyId] = useState<
+    number | null
+  >(null);
+  const [supplierLedgerTab, setSupplierLedgerTab] = useState<
+    'bills' | 'payments'
+  >('bills');
+  const [expandedSupplierBillIds, setExpandedSupplierBillIds] = useState<
+    Record<number, boolean>
+  >({});
+  const [supplierShareFeedback, setSupplierShareFeedback] = useState<
+    string | null
+  >(null);
 
   const totals = useMemo(() => {
     const toCollect = parties
@@ -141,6 +167,41 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
     return map;
   }, [khataEntries]);
 
+  const supplierBillStatsByParty = useMemo(() => {
+    const map = new Map<
+      number,
+      { totalBills: number; partialCount: number; unpaidCount: number; paymentCount: number }
+    >();
+    for (const pur of purchases) {
+      const prev = map.get(pur.supplierId) ?? {
+        totalBills: 0,
+        partialCount: 0,
+        unpaidCount: 0,
+        paymentCount: 0,
+      };
+      const st = getPurchasePaymentStatus(pur);
+      map.set(pur.supplierId, {
+        totalBills: prev.totalBills + 1,
+        partialCount: prev.partialCount + (st === 'Partially Paid' ? 1 : 0),
+        unpaidCount: prev.unpaidCount + (st === 'Unpaid' ? 1 : 0),
+        paymentCount: prev.paymentCount,
+      });
+    }
+    for (const pay of supplierPayments) {
+      const prev = map.get(pay.partyId) ?? {
+        totalBills: 0,
+        partialCount: 0,
+        unpaidCount: 0,
+        paymentCount: 0,
+      };
+      map.set(pay.partyId, {
+        ...prev,
+        paymentCount: prev.paymentCount + 1,
+      });
+    }
+    return map;
+  }, [purchases, supplierPayments]);
+
   const selectedKhataParty = useMemo(
     () => parties.find((p) => p.id === selectedKhataPartyId) ?? null,
     [parties, selectedKhataPartyId],
@@ -158,6 +219,39 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
     });
   }, [selectedKhataParty, khataEntries, sales, items, fromDate, toDate]);
 
+  const selectedSupplierParty = useMemo(
+    () => parties.find((p) => p.id === selectedSupplierPartyId) ?? null,
+    [parties, selectedSupplierPartyId],
+  );
+
+  const supplierStatement = useMemo(() => {
+    if (!selectedSupplierParty) return null;
+    return buildSupplierLedgerStatement({
+      party: selectedSupplierParty,
+      purchases,
+      supplierPayments,
+    });
+  }, [selectedSupplierParty, purchases, supplierPayments]);
+
+  const settleTargetOpenBills = useMemo(() => {
+    if (!settleTarget || settleTarget.type !== 'supplier') return [];
+    return purchases
+      .filter((p) => p.supplierId === settleTarget.id && p.balanceDue > 0.005)
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+  }, [settleTarget, purchases]);
+
+  const selectedSettleBill = useMemo(() => {
+    if (settlePurchaseId === '' || !settleTarget) return null;
+    return (
+      settleTargetOpenBills.find((b) => b.id === Number(settlePurchaseId)) ??
+      null
+    );
+  }, [settlePurchaseId, settleTarget, settleTargetOpenBills]);
+
   const openKhataModal = (party: Party) => {
     setSelectedKhataPartyId(party.id);
     setFromDate('');
@@ -166,6 +260,13 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
     setExpandedRowIds({});
     setExpandAllBills(false);
     setShareFeedback(null);
+  };
+
+  const openSupplierLedgerModal = (party: Party) => {
+    setSelectedSupplierPartyId(party.id);
+    setSupplierLedgerTab('bills');
+    setExpandedSupplierBillIds({});
+    setSupplierShareFeedback(null);
   };
 
   const applyDatePreset = (preset: DatePresetKey) => {
@@ -203,9 +304,16 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
     }
   };
 
-  const openSettleModal = (party: Party) => {
+  const openSettleModal = (party: Party, preselectedBill?: PurchaseRecord) => {
     setSettleTarget(party);
-    setSettleAmount(String(party.balance));
+    setSettleError(null);
+    if (preselectedBill) {
+      setSettlePurchaseId(preselectedBill.id);
+      setSettleAmount(String(preselectedBill.balanceDue));
+    } else {
+      setSettlePurchaseId('');
+      setSettleAmount(String(party.balance));
+    }
     setSettleMethod('Cash');
     setSettleDate(toLocalYmd(new Date()));
     setSettleReference('');
@@ -231,18 +339,249 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
     e.preventDefault();
     if (!settleTarget) return;
     const amt = Math.max(0, Number(settleAmount) || 0);
-    if (amt > 0) {
+    if (amt <= 0) {
+      setSettleError('Enter a payment amount greater than 0.');
+      return;
+    }
+    try {
       onSettleBalance(settleTarget.id, amt, {
         paymentMode: settleMethod,
         collectedAt: settleDate,
         reference: settleReference.trim() || undefined,
         notes: settleNotes.trim() || undefined,
+        purchaseId:
+          settleTarget.type === 'supplier' && settlePurchaseId !== ''
+            ? Number(settlePurchaseId)
+            : null,
       });
+      setSettleTarget(null);
+      setSettleAmount('');
+      setSettleReference('');
+      setSettleNotes('');
+      setSettlePurchaseId('');
+      setSettleError(null);
+    } catch (err) {
+      setSettleError(
+        err instanceof Error ? err.message : 'Unable to record payment.',
+      );
     }
-    setSettleTarget(null);
-    setSettleAmount('');
-    setSettleReference('');
-    setSettleNotes('');
+  };
+
+  const handleCopySupplierShare = async () => {
+    if (!supplierStatement) return;
+    const text = buildSupplierLedgerShareText({
+      statement: supplierStatement,
+      settings,
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      setSupplierShareFeedback('Supplier ledger copied to clipboard');
+      window.setTimeout(() => setSupplierShareFeedback(null), 3000);
+    } catch {
+      setSupplierShareFeedback('Unable to access clipboard');
+      window.setTimeout(() => setSupplierShareFeedback(null), 3000);
+    }
+  };
+
+  const handleShareSupplierStatement = async () => {
+    if (!supplierStatement) return;
+    const text = buildSupplierLedgerShareText({
+      statement: supplierStatement,
+      settings,
+    });
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: `Supplier Ledger - ${supplierStatement.party.name}`,
+          text,
+        });
+        setSupplierShareFeedback('Supplier ledger shared');
+        window.setTimeout(() => setSupplierShareFeedback(null), 3000);
+        return;
+      } catch {
+        // Fallback to clipboard copy
+      }
+    }
+    await handleCopySupplierShare();
+  };
+
+  const handleDownloadSupplierPdf = () => {
+    if (!supplierStatement) return;
+    const pharmacyName =
+      settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
+    const address =
+      settings?.address?.trim() || '17 KM Ferozepur Road, Lahore';
+    const phone = settings?.phone?.trim() || '';
+    const fmt = (val: number) =>
+      formatMoney(val, settings, { asciiOnly: true });
+
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const left = 14;
+    const right = 196;
+    let y = 16;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(13, 122, 95);
+    doc.text(pharmacyName.toUpperCase(), left, y);
+
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text('SUPPLIER BILLS & PAYMENT LEDGER', right, y, { align: 'right' });
+
+    y += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`${address}${phone ? ` · Tel: ${phone}` : ''}`, left, y);
+
+    y += 4;
+    doc.setDrawColor(180, 83, 9);
+    doc.setLineWidth(0.5);
+    doc.line(left, y, right, y);
+
+    y += 6;
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(left, y, right - left, 18, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text(supplierStatement.party.name, left + 4, y + 6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(
+      `Phone: ${supplierStatement.party.phone || 'N/A'}`,
+      left + 4,
+      y + 12.5,
+    );
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(
+      `Purchased: ${fmt(supplierStatement.totalPurchased)}`,
+      125,
+      y + 6,
+    );
+    doc.text(
+      `Paid: ${fmt(supplierStatement.totalPaymentsRecorded)}`,
+      125,
+      y + 11,
+    );
+    doc.setTextColor(180, 83, 9);
+    doc.text(
+      `To Pay: ${fmt(supplierStatement.currentBalanceDue)}`,
+      125,
+      y + 16,
+    );
+
+    y += 24;
+    const ensurePage = (needed: number) => {
+      if (y + needed > 280) {
+        doc.addPage();
+        y = 16;
+      }
+    };
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`Purchase Bills (${supplierStatement.bills.length})`, left, y);
+    y += 3;
+
+    doc.setFillColor(15, 23, 42);
+    doc.rect(left, y, right - left, 7, 'F');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text('Date', left + 2, y + 4.8);
+    doc.text('Purchase / Inv #', left + 26, y + 4.8);
+    doc.text('Status', left + 82, y + 4.8);
+    doc.text('Total', 142, y + 4.8, { align: 'right' });
+    doc.text('Paid', 168, y + 4.8, { align: 'right' });
+    doc.text('Remaining', right - 2, y + 4.8, { align: 'right' });
+    y += 7;
+
+    for (const row of supplierStatement.bills) {
+      ensurePage(12);
+      const p = row.purchase;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(15, 23, 42);
+      doc.text(formatDateBySettings(p.createdAt, settings), left + 2, y + 4.5);
+      doc.text(
+        `${p.purchaseNumber} (${p.supplierInvoiceNo})`.slice(0, 30),
+        left + 26,
+        y + 4.5,
+      );
+      doc.setFont('helvetica', 'bold');
+      doc.text(row.status, left + 82, y + 4.5);
+      doc.setFont('helvetica', 'normal');
+      doc.text(fmt(p.totalAmount), 142, y + 4.5, { align: 'right' });
+      doc.text(fmt(p.paidAmount), 168, y + 4.5, { align: 'right' });
+      doc.setFont('helvetica', 'bold');
+      doc.text(fmt(p.balanceDue), right - 2, y + 4.5, { align: 'right' });
+      y += 6;
+      for (const line of p.items) {
+        ensurePage(5);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.2);
+        doc.setTextColor(71, 85, 105);
+        doc.text(
+          `• ${line.itemName} (${line.quantity} x ${fmt(line.unitCost)}) = ${fmt(line.lineTotal)}`,
+          left + 26,
+          y + 2,
+        );
+        y += 4;
+      }
+      doc.setDrawColor(226, 232, 240);
+      doc.line(left, y + 1, right, y + 1);
+      y += 2;
+    }
+
+    if (supplierStatement.payments.length > 0) {
+      y += 4;
+      ensurePage(16);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(
+        `Payment History (${supplierStatement.payments.length})`,
+        left,
+        y,
+      );
+      y += 5;
+      for (const pay of supplierStatement.payments) {
+        ensurePage(7);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(15, 23, 42);
+        const billLabel = pay.purchaseNumber
+          ? `Bill ${pay.purchaseNumber}`
+          : 'General Payable';
+        doc.text(
+          `${formatDateBySettings(pay.createdAt, settings)} · ${pay.paymentMode} · ${billLabel}${pay.reference ? ` · Ref: ${pay.reference}` : ''}`,
+          left + 2,
+          y + 3,
+        );
+        doc.setFont('helvetica', 'bold');
+        doc.text(fmt(pay.amount), right - 2, y + 3, { align: 'right' });
+        y += 5.5;
+      }
+    }
+
+    const safeSlug = supplierStatement.party.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    doc.save(`supplier-ledger-${safeSlug || 'supplier'}.pdf`);
   };
 
   const toggleRowExpanded = (rowId: string) => {
@@ -498,7 +837,7 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
             {formatMoney(totals.toPay, settings)}
           </p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Outstanding balance to wholesale pharmaceutical suppliers
+            Click any supplier row or View Bills to inspect bills, partial payments & payment history
           </p>
         </div>
       </div>
@@ -582,16 +921,19 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
             ) : (
               filtered.map((party) => {
                 const entryCount = entryCountsByParty.get(party.id) ?? 0;
+                const supStats = supplierBillStatsByParty.get(party.id);
                 const isCustomer = party.type === 'customer';
                 return (
                   <tr
                     key={party.id}
                     onClick={() => {
-                      if (isCustomer) openKhataModal(party);
+                      if (isCustomer) {
+                        openKhataModal(party);
+                      } else {
+                        openSupplierLedgerModal(party);
+                      }
                     }}
-                    className={`transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40 ${
-                      isCustomer ? 'cursor-pointer' : ''
-                    }`}
+                    className="cursor-pointer transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40"
                   >
                     <td className="px-5 py-3.5 font-semibold text-slate-900 dark:text-slate-100">
                       <div className="flex items-center gap-2.5">
@@ -600,11 +942,25 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                           <span className="hover:text-[#0D7A5F] dark:hover:text-emerald-400">
                             {party.name}
                           </span>
-                          {isCustomer && (
+                          {isCustomer ? (
                             <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
                               {entryCount > 0
                                 ? `${entryCount} khata entr${entryCount === 1 ? 'y' : 'ies'} · Click to view statement`
                                 : 'Click to view khata statement'}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
+                              {supStats && supStats.totalBills > 0
+                                ? `${supStats.totalBills} bill${supStats.totalBills === 1 ? '' : 's'}${
+                                    supStats.partialCount > 0
+                                      ? ` · ${supStats.partialCount} partial`
+                                      : ''
+                                  }${
+                                    supStats.unpaidCount > 0
+                                      ? ` · ${supStats.unpaidCount} unpaid`
+                                      : ''
+                                  } · Click to view bills & payments`
+                                : 'Click to view supplier bills & payment history'}
                             </span>
                           )}
                         </div>
@@ -629,7 +985,7 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="flex items-center justify-end gap-2">
-                        {isCustomer && (
+                        {isCustomer ? (
                           <button
                             type="button"
                             onClick={() => openKhataModal(party)}
@@ -637,6 +993,15 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                           >
                             <FileText className="h-3.5 w-3.5" />
                             <span>View Khata</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => openSupplierLedgerModal(party)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs font-semibold text-amber-800 whitespace-nowrap hover:bg-amber-100 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50"
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            <span>View Bills</span>
                           </button>
                         )}
                         {party.balance > 0 ? (
@@ -1295,6 +1660,486 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
         </div>
       )}
 
+      {/* Supplier Bills & Payment Ledger Modal */}
+      {selectedSupplierParty && supplierStatement && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 dark:bg-black/75 sm:p-5"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="supplier-ledger-title"
+        >
+          <div className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            {/* Header */}
+            <div className="no-print flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-50/70 px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
+              <div>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h3
+                    id="supplier-ledger-title"
+                    className="text-lg font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    {selectedSupplierParty.name}
+                  </h3>
+                  <span
+                    className={`rounded-md px-2 py-0.5 font-mono-tabular text-xs font-bold ${
+                      selectedSupplierParty.balance > 0
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                        : 'bg-emerald-100 text-[#0D7A5F] dark:bg-emerald-950/70 dark:text-emerald-300'
+                    }`}
+                  >
+                    To Pay:{' '}
+                    {formatMoney(selectedSupplierParty.balance, settings)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Bill-Wise Purchases & Supplier Payment Ledger ·{' '}
+                  {selectedSupplierParty.phone || 'No phone saved'}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {(selectedSupplierParty.balance > 0 ||
+                  supplierStatement.bills.some(
+                    (b) => b.purchase.balanceDue > 0.005,
+                  )) && (
+                  <button
+                    type="button"
+                    onClick={() => openSettleModal(selectedSupplierParty)}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#0D7A5F] px-3 py-2 text-xs font-semibold text-white whitespace-nowrap hover:bg-[#0A634D]"
+                  >
+                    <Wallet className="h-3.5 w-3.5" />
+                    <span>Record Payment</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCopySupplierShare}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 whitespace-nowrap hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  <span>Copy Summary</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShareSupplierStatement}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 whitespace-nowrap hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  <span>Share</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadSupplierPdf}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 whitespace-nowrap hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSupplierPartyId(null)}
+                  className="rounded-lg p-2 text-slate-500 hover:bg-slate-200/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                  aria-label="Close supplier ledger"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {supplierShareFeedback && (
+              <div className="no-print flex items-center gap-2 border-b border-emerald-200 bg-emerald-50 px-6 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
+                <Check className="h-3.5 w-3.5" />
+                <span>{supplierShareFeedback}</span>
+              </div>
+            )}
+
+            <div className="flex-1 space-y-5 overflow-y-auto p-6">
+              {/* Summary Totals */}
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Total Purchased
+                  </p>
+                  <p className="mt-1 font-mono-tabular text-lg font-bold text-slate-900 dark:text-slate-100">
+                    {formatMoney(supplierStatement.totalPurchased, settings)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    Across {supplierStatement.bills.length} purchase bill
+                    {supplierStatement.bills.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Total Paid
+                  </p>
+                  <p className="mt-1 font-mono-tabular text-lg font-bold text-[#0D7A5F] dark:text-emerald-400">
+                    {formatMoney(
+                      supplierStatement.totalPaymentsRecorded,
+                      settings,
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    {supplierStatement.payments.length} recorded payment
+                    {supplierStatement.payments.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900/50 dark:bg-amber-950/30">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-amber-800 dark:text-amber-400">
+                    Current To Pay
+                  </p>
+                  <p className="mt-1 font-mono-tabular text-lg font-bold text-amber-800 dark:text-amber-300">
+                    {formatMoney(supplierStatement.currentBalanceDue, settings)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-600 dark:text-slate-400">
+                    {Math.abs(supplierStatement.unallocatedOrOpeningBalance) >
+                    0.01
+                      ? supplierStatement.unallocatedOrOpeningBalance > 0
+                        ? `Includes ${formatMoney(supplierStatement.unallocatedOrOpeningBalance, settings)} opening/prev bal`
+                        : `Includes ${formatMoney(Math.abs(supplierStatement.unallocatedOrOpeningBalance), settings)} unallocated payments`
+                      : 'Matches open bill balances'}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Bill Status
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-semibold">
+                    <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
+                      {supplierStatement.paidBillCount} Paid
+                    </span>
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300">
+                      {supplierStatement.partialBillCount} Partial
+                    </span>
+                    <span className="rounded bg-rose-100 px-2 py-0.5 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300">
+                      {supplierStatement.unpaidBillCount} Unpaid
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sub-Tabs */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="inline-flex items-center gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setSupplierLedgerTab('bills')}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      supplierLedgerTab === 'bills'
+                        ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    Purchase Bills ({supplierStatement.bills.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSupplierLedgerTab('payments')}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      supplierLedgerTab === 'payments'
+                        ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    Payment History ({supplierStatement.payments.length})
+                  </button>
+                </div>
+              </div>
+
+              {supplierLedgerTab === 'bills' ? (
+                supplierStatement.bills.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                    No purchase bills recorded for this supplier yet. Record stock-in from Purchases & Suppliers.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {supplierStatement.bills.map((row) => {
+                      const pur = row.purchase;
+                      const isExpanded = Boolean(
+                        expandedSupplierBillIds[pur.id],
+                      );
+                      const pctPaid =
+                        pur.totalAmount > 0
+                          ? Math.min(
+                              100,
+                              Math.round((pur.paidAmount / pur.totalAmount) * 100),
+                            )
+                          : 100;
+
+                      return (
+                        <div
+                          key={pur.id}
+                          className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+                        >
+                          <div className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex items-start gap-3">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedSupplierBillIds((prev) => ({
+                                    ...prev,
+                                    [pur.id]: !prev[pur.id],
+                                  }))
+                                }
+                                className="mt-0.5 rounded-md border border-slate-200 bg-slate-50 p-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                                aria-label={
+                                  isExpanded
+                                    ? 'Collapse bill items'
+                                    : 'Expand bill items'
+                                }
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-mono-tabular text-xs font-bold text-slate-900 dark:text-slate-100">
+                                    {pur.purchaseNumber}
+                                  </span>
+                                  <span className="font-mono-tabular rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                    Inv: {pur.supplierInvoiceNo}
+                                  </span>
+                                  <span
+                                    className={`rounded px-2 py-0.5 text-[10.5px] font-bold ${
+                                      row.status === 'Paid'
+                                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                                        : row.status === 'Partially Paid'
+                                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                                          : 'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300'
+                                    }`}
+                                  >
+                                    {row.status}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[11.5px] text-slate-500 dark:text-slate-400">
+                                  {formatDateBySettings(pur.createdAt, settings, {
+                                    includeTime: true,
+                                  })}{' '}
+                                  · {pur.items.length} line
+                                  {pur.items.length === 1 ? '' : 's'} ·{' '}
+                                  {row.status === 'Partially Paid'
+                                    ? `Partial payment recorded (${pctPaid}% paid)`
+                                    : row.status === 'Unpaid'
+                                      ? 'No payment recorded yet'
+                                      : 'Settled in full'}
+                                </p>
+                                {/* Progress bar for partial/unpaid clarity */}
+                                <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                                  <div
+                                    className={`h-full rounded-full ${
+                                      row.status === 'Paid'
+                                        ? 'bg-[#0D7A5F]'
+                                        : row.status === 'Partially Paid'
+                                          ? 'bg-amber-500'
+                                          : 'bg-rose-400'
+                                    }`}
+                                    style={{ width: `${pctPaid}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-4 pl-9 sm:justify-end sm:pl-0">
+                              <div className="grid grid-cols-3 gap-4 text-right text-xs">
+                                <div>
+                                  <p className="text-[10px] uppercase text-slate-400">
+                                    Total
+                                  </p>
+                                  <p className="font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
+                                    {formatMoney(pur.totalAmount, settings)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] uppercase text-slate-400">
+                                    Paid
+                                  </p>
+                                  <p className="font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
+                                    {formatMoney(pur.paidAmount, settings)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] uppercase text-slate-400">
+                                    Remaining
+                                  </p>
+                                  <p
+                                    className={`font-mono-tabular font-bold ${
+                                      pur.balanceDue > 0.005
+                                        ? 'text-amber-700 dark:text-amber-400'
+                                        : 'text-slate-500 dark:text-slate-400'
+                                    }`}
+                                  >
+                                    {formatMoney(pur.balanceDue, settings)}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {pur.balanceDue > 0.005 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openSettleModal(selectedSupplierParty, pur)
+                                  }
+                                  className="rounded-lg bg-[#0D7A5F] px-3 py-1.5 text-xs font-semibold text-white whitespace-nowrap hover:bg-[#0A634D]"
+                                >
+                                  Pay Bill
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="space-y-3 border-t border-slate-100 bg-slate-50/80 px-4 py-3 pl-12 dark:border-slate-800 dark:bg-slate-950/50">
+                              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                                <table className="w-full text-left text-[11px]">
+                                  <thead className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-800/70 dark:text-slate-400">
+                                    <tr>
+                                      <th className="px-3 py-2 font-semibold">
+                                        Medicine Received
+                                      </th>
+                                      <th className="px-3 py-2 font-semibold">
+                                        Batch / Expiry
+                                      </th>
+                                      <th className="px-3 py-2 text-right font-semibold">
+                                        Qty
+                                      </th>
+                                      <th className="px-3 py-2 text-right font-semibold">
+                                        Unit Cost
+                                      </th>
+                                      <th className="px-3 py-2 text-right font-semibold">
+                                        Line Total
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    {pur.items.map((line) => (
+                                      <tr key={line.id}>
+                                        <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">
+                                          {line.itemName}
+                                        </td>
+                                        <td className="px-3 py-2 font-mono-tabular text-slate-500 dark:text-slate-400">
+                                          {line.batchNumber || '—'} · Exp{' '}
+                                          {line.expiryDate}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                                          {line.quantity}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                                          {formatMoney(line.unitCost, settings)}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
+                                          {formatMoney(line.lineTotal, settings)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              {row.allocatedPayments.length > 0 && (
+                                <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+                                  <p className="text-[11px] font-semibold text-emerald-900 dark:text-emerald-300">
+                                    Payments Allocated to {pur.purchaseNumber}
+                                  </p>
+                                  <div className="mt-1.5 space-y-1 text-[11px]">
+                                    {row.allocatedPayments.map((pay) => (
+                                      <div
+                                        key={pay.id}
+                                        className="flex flex-wrap items-center justify-between gap-2 text-slate-700 dark:text-slate-300"
+                                      >
+                                        <span>
+                                          {formatDateBySettings(
+                                            pay.createdAt,
+                                            settings,
+                                          )}{' '}
+                                          · {pay.paymentMode}
+                                          {pay.reference
+                                            ? ` · Ref: ${pay.reference}`
+                                            : ''}
+                                          {pay.notes ? ` · ${pay.notes}` : ''}
+                                        </span>
+                                        <span className="font-mono-tabular font-bold text-[#0D7A5F] dark:text-emerald-400">
+                                          {formatMoney(pay.amount, settings)}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : supplierStatement.payments.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  No payments recorded to this supplier yet.
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
+                      <tr>
+                        <th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Allocation</th>
+                        <th className="px-4 py-3">Method & Reference</th>
+                        <th className="px-4 py-3">Notes</th>
+                        <th className="px-4 py-3 text-right">Amount Paid</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {supplierStatement.payments.map((pay) => (
+                        <tr key={pay.id}>
+                          <td className="px-4 py-3 font-mono-tabular text-slate-700 dark:text-slate-300">
+                            {formatDateBySettings(pay.createdAt, settings, {
+                              includeTime: true,
+                            })}
+                          </td>
+                          <td className="px-4 py-3">
+                            {pay.purchaseNumber ? (
+                              <span className="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 font-mono-tabular text-[11px] font-semibold text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300">
+                                {pay.purchaseNumber}
+                                {pay.supplierInvoiceNo
+                                  ? ` (${pay.supplierInvoiceNo})`
+                                  : ''}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                General Payable
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
+                            <span className="font-medium">{pay.paymentMode}</span>
+                            {pay.reference && (
+                              <span className="ml-1.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
+                                · Ref: {pay.reference}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
+                            {pay.notes || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono-tabular font-bold text-[#0D7A5F] dark:text-emerald-400">
+                            {formatMoney(pay.amount, settings)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Party Modal */}
       {isAddOpen && (
         <div
@@ -1424,6 +2269,65 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
             </div>
 
             <div className="mt-4 space-y-3">
+              {settleError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+                  {settleError}
+                </div>
+              )}
+
+              {settleTarget.type === 'supplier' && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Allocate to Purchase Bill (Optional)
+                  </label>
+                  <select
+                    value={settlePurchaseId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val) {
+                        setSettlePurchaseId('');
+                        setSettleAmount(String(settleTarget.balance));
+                        return;
+                      }
+                      const billId = Number(val);
+                      setSettlePurchaseId(billId);
+                      const bill = settleTargetOpenBills.find(
+                        (b) => b.id === billId,
+                      );
+                      if (bill) {
+                        setSettleAmount(String(bill.balanceDue));
+                      }
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <option value="">
+                      General Supplier Payable (Unallocated · Bal:{' '}
+                      {formatMoney(settleTarget.balance, settings)})
+                    </option>
+                    {settleTargetOpenBills.map((bill) => {
+                      const status = getPurchasePaymentStatus(bill);
+                      return (
+                        <option key={bill.id} value={bill.id}>
+                          {bill.purchaseNumber} (Inv: {bill.supplierInvoiceNo}) ·{' '}
+                          {status} · Due:{' '}
+                          {formatMoney(bill.balanceDue, settings)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {selectedSettleBill && (
+                    <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                      Bill Total:{' '}
+                      {formatMoney(selectedSettleBill.totalAmount, settings)} ·
+                      Already Paid:{' '}
+                      {formatMoney(selectedSettleBill.paidAmount, settings)} ·
+                      Remaining:{' '}
+                      {formatMoney(selectedSettleBill.balanceDue, settings)}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
@@ -1433,7 +2337,11 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                     required
                     type="number"
                     min={0.01}
-                    max={settleTarget.balance}
+                    max={
+                      selectedSettleBill
+                        ? selectedSettleBill.balanceDue
+                        : settleTarget.balance
+                    }
                     step="0.01"
                     value={settleAmount}
                     onChange={(e) => setSettleAmount(e.target.value)}
@@ -1442,7 +2350,9 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
-                    Collection Date
+                    {settleTarget.type === 'customer'
+                      ? 'Collection Date'
+                      : 'Payment Date'}
                   </label>
                   <input
                     required
@@ -1493,7 +2403,11 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                   type="text"
                   value={settleNotes}
                   onChange={(e) => setSettleNotes(e.target.value)}
-                  placeholder="e.g., Partial cash payment at counter"
+                  placeholder={
+                    settleTarget.type === 'customer'
+                      ? 'e.g., Partial cash payment at counter'
+                      : 'e.g., Partial payment against invoice'
+                  }
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1511,7 +2425,9 @@ export const PartiesWorkspace: React.FC<PartiesWorkspaceProps> = ({
                 type="submit"
                 className="rounded-lg bg-[#0D7A5F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0A634D]"
               >
-                Confirm Settlement
+                {settleTarget.type === 'customer'
+                  ? 'Confirm Collection'
+                  : 'Confirm Payment'}
               </button>
             </div>
           </form>

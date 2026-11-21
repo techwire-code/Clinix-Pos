@@ -26,10 +26,14 @@ import {
   PrinterConfig,
   PurchaseDraftLine,
   PurchaseItemRecord,
+  PurchasePaymentStatus,
   PurchaseRecord,
   SaleAuditLogEntry,
   SaleItemRecord,
   SaleRecord,
+  SupplierBillLedgerRow,
+  SupplierLedgerStatement,
+  SupplierPaymentEntry,
   SymbolPosition,
   ThermalWidth,
   UserRole,
@@ -44,6 +48,7 @@ const STORAGE_KEYS = {
   parties: 'clinix_pos_parties_v1',
   sales: 'clinix_pos_sales_v1',
   purchases: 'clinix_pos_purchases_v1',
+  supplierPayments: 'clinix_pos_supplier_payments_v1',
   expenses: 'clinix_pos_expenses_v1',
   khata: 'clinix_pos_khata_v1',
   printer: 'clinix_pos_printer_v1',
@@ -418,6 +423,217 @@ export function loadPurchases(): PurchaseRecord[] {
 
 export function savePurchases(purchases: PurchaseRecord[]): void {
   writeStorage(STORAGE_KEYS.purchases, purchases);
+}
+
+export function getPurchasePaymentStatus(
+  purchase: Pick<PurchaseRecord, 'totalAmount' | 'paidAmount' | 'balanceDue'>,
+): PurchasePaymentStatus {
+  const due = Number(purchase.balanceDue) || 0;
+  const paid = Number(purchase.paidAmount) || 0;
+  if (due <= 0.005) return 'Paid';
+  if (paid > 0.005) return 'Partially Paid';
+  return 'Unpaid';
+}
+
+export function reconcileSupplierPayments(
+  purchases: PurchaseRecord[],
+  existingEntries: SupplierPaymentEntry[],
+): SupplierPaymentEntry[] {
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  const entries: SupplierPaymentEntry[] = existingEntries.map((entry) => ({
+    ...entry,
+    amount: Math.max(0, round2(Number(entry.amount) || 0)),
+  }));
+  let nextId = entries.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+
+  for (const pur of purchases) {
+    const paid = round2(Math.max(0, Number(pur.paidAmount) || 0));
+    if (paid <= 0.005) continue;
+    const hasLinked = entries.some(
+      (e) =>
+        e.partyId === pur.supplierId &&
+        ((pur.id && e.purchaseId === pur.id) ||
+          (pur.purchaseNumber && e.purchaseNumber === pur.purchaseNumber)),
+    );
+    if (!hasLinked) {
+      entries.push({
+        id: nextId++,
+        partyId: pur.supplierId,
+        purchaseId: pur.id,
+        purchaseNumber: pur.purchaseNumber,
+        supplierInvoiceNo: pur.supplierInvoiceNo,
+        amount: paid,
+        paymentMode:
+          pur.paymentMode === 'Credit/Party Ledger' ||
+          pur.paymentMode === 'Credit / Khata'
+            ? 'Cash'
+            : pur.paymentMode,
+        notes: 'Initial payment recorded with purchase bill',
+        createdAt: pur.createdAt,
+      });
+    }
+  }
+
+  return entries;
+}
+
+export function loadSupplierPayments(): SupplierPaymentEntry[] {
+  const existing = readStorage<SupplierPaymentEntry[] | null>(
+    STORAGE_KEYS.supplierPayments,
+    null,
+  );
+  const purchases = loadPurchases();
+  const reconciled = reconcileSupplierPayments(
+    purchases,
+    Array.isArray(existing) ? existing : [],
+  );
+  if (!existing || reconciled.length !== existing.length) {
+    writeStorage(STORAGE_KEYS.supplierPayments, reconciled);
+  }
+  return reconciled;
+}
+
+export function saveSupplierPayments(entries: SupplierPaymentEntry[]): void {
+  writeStorage(STORAGE_KEYS.supplierPayments, entries);
+}
+
+export function buildSupplierLedgerStatement(params: {
+  party: Party;
+  purchases: PurchaseRecord[];
+  supplierPayments: SupplierPaymentEntry[];
+}): SupplierLedgerStatement {
+  const { party, purchases, supplierPayments } = params;
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+
+  const supplierBillsRaw = purchases
+    .filter((p) => p.supplierId === party.id)
+    .slice()
+    .sort((a, b) => {
+      const tDiff =
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      if (tDiff !== 0) return tDiff;
+      return b.id - a.id;
+    });
+
+  const payments = supplierPayments
+    .filter((p) => p.partyId === party.id)
+    .slice()
+    .sort((a, b) => {
+      const tDiff =
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      if (tDiff !== 0) return tDiff;
+      return b.id - a.id;
+    });
+
+  const bills: SupplierBillLedgerRow[] = supplierBillsRaw.map((purchase) => {
+    const status = getPurchasePaymentStatus(purchase);
+    const allocatedPayments = payments.filter(
+      (pay) =>
+        (purchase.id && pay.purchaseId === purchase.id) ||
+        (purchase.purchaseNumber &&
+          pay.purchaseNumber === purchase.purchaseNumber),
+    );
+    return {
+      purchase,
+      status,
+      allocatedPayments,
+    };
+  });
+
+  const totalPurchased = round2(
+    bills.reduce((s, b) => s + (Number(b.purchase.totalAmount) || 0), 0),
+  );
+  const totalPaidOnBills = round2(
+    bills.reduce((s, b) => s + (Number(b.purchase.paidAmount) || 0), 0),
+  );
+  const totalBillRemaining = round2(
+    bills.reduce((s, b) => s + (Number(b.purchase.balanceDue) || 0), 0),
+  );
+  const totalPaymentsRecorded = round2(
+    payments.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+  );
+  const unallocatedOrOpeningBalance = round2(
+    (Number(party.balance) || 0) - totalBillRemaining,
+  );
+
+  const unpaidBillCount = bills.filter((b) => b.status === 'Unpaid').length;
+  const partialBillCount = bills.filter(
+    (b) => b.status === 'Partially Paid',
+  ).length;
+  const paidBillCount = bills.filter((b) => b.status === 'Paid').length;
+
+  return {
+    party,
+    bills,
+    payments,
+    totalPurchased,
+    totalPaidOnBills,
+    totalBillRemaining,
+    totalPaymentsRecorded,
+    unallocatedOrOpeningBalance,
+    unpaidBillCount,
+    partialBillCount,
+    paidBillCount,
+    currentBalanceDue: round2(Number(party.balance) || 0),
+  };
+}
+
+export function buildSupplierLedgerShareText(params: {
+  statement: SupplierLedgerStatement;
+  settings?: Partial<PharmacySettings> | null;
+}): string {
+  const { statement, settings } = params;
+  const pharmacyName =
+    settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
+  const phone = settings?.phone?.trim() || '';
+  const fmt = (val: number) => formatMoney(val, settings);
+  const lines: string[] = [
+    `*${pharmacyName.toUpperCase()}*`,
+    `Supplier Purchase & Payment Ledger`,
+    ...(phone ? [`Tel: ${phone}`] : []),
+    `--------------------------------`,
+    `Supplier: ${statement.party.name}`,
+    ...(statement.party.phone ? [`Phone: ${statement.party.phone}`] : []),
+    `--------------------------------`,
+    `Total Purchased: ${fmt(statement.totalPurchased)}`,
+    `Total Paid: ${fmt(statement.totalPaymentsRecorded)}`,
+    `*Current Payable (To Pay): ${fmt(statement.currentBalanceDue)}*`,
+    `Bills: ${statement.paidBillCount} Paid · ${statement.partialBillCount} Partial · ${statement.unpaidBillCount} Unpaid`,
+    `--------------------------------`,
+  ];
+
+  if (statement.bills.length === 0) {
+    lines.push('No purchase bills recorded yet.');
+  } else {
+    lines.push('PURCHASE BILLS:');
+    for (const row of statement.bills) {
+      const p = row.purchase;
+      const dateStr = formatDateBySettings(p.createdAt, settings);
+      lines.push(
+        `${dateStr} | ${p.purchaseNumber} (Inv: ${p.supplierInvoiceNo}) | ${row.status}`,
+      );
+      lines.push(
+        `   Total: ${fmt(p.totalAmount)} | Paid: ${fmt(p.paidAmount)} | Remaining: ${fmt(p.balanceDue)}`,
+      );
+    }
+  }
+
+  if (statement.payments.length > 0) {
+    lines.push(`--------------------------------`);
+    lines.push('PAYMENT HISTORY:');
+    for (const pay of statement.payments) {
+      const dateStr = formatDateBySettings(pay.createdAt, settings);
+      const billTag = pay.purchaseNumber
+        ? `Bill ${pay.purchaseNumber}`
+        : 'General Payable';
+      lines.push(
+        `${dateStr} | ${fmt(pay.amount)} (${pay.paymentMode}) · ${billTag}${pay.reference ? ` · Ref: ${pay.reference}` : ''}`,
+      );
+    }
+  }
+
+  lines.push(`--------------------------------`);
+  return lines.join('\n');
 }
 
 export function reconcileKhataEntries(
@@ -1250,7 +1466,7 @@ export function deletePharmacyUser(
 export function exportDatabaseBackupJson(): string {
   const payload = {
     app: 'Clinix Community Pharmacy POS',
-    schemaVersion: 5,
+    schemaVersion: 6,
     exportedAt: new Date().toISOString(),
     tables: {
       app_settings: loadSettings(),
@@ -1259,6 +1475,7 @@ export function exportDatabaseBackupJson(): string {
       parties: loadParties(),
       sales: loadSales(),
       purchases: loadPurchases(),
+      supplier_payments: loadSupplierPayments(),
       expenses: loadExpenses(),
       khata_entries: loadKhataEntries(),
       printer: loadPrinterConfig(),
@@ -1286,6 +1503,7 @@ export function resetDemoDatabase(): {
   parties: Party[];
   sales: SaleRecord[];
   purchases: PurchaseRecord[];
+  supplierPayments: SupplierPaymentEntry[];
   expenses: ExpenseRecord[];
   khataEntries: KhataEntry[];
   printer: PrinterConfig;
@@ -1295,6 +1513,8 @@ export function resetDemoDatabase(): {
   writeStorage(STORAGE_KEYS.parties, SEED_PARTIES);
   writeStorage(STORAGE_KEYS.sales, SEED_SALES);
   writeStorage(STORAGE_KEYS.purchases, SEED_PURCHASES);
+  const supplierPayments = reconcileSupplierPayments(SEED_PURCHASES, []);
+  writeStorage(STORAGE_KEYS.supplierPayments, supplierPayments);
   writeStorage(STORAGE_KEYS.expenses, SEED_EXPENSES);
   const khataEntries = reconcileKhataEntries(SEED_PARTIES, SEED_SALES, []);
   writeStorage(STORAGE_KEYS.khata, khataEntries);
@@ -1305,6 +1525,7 @@ export function resetDemoDatabase(): {
     parties: SEED_PARTIES,
     sales: SEED_SALES,
     purchases: SEED_PURCHASES,
+    supplierPayments,
     expenses: SEED_EXPENSES,
     khataEntries,
     printer: DEFAULT_PRINTER_CONFIG,
@@ -1997,6 +2218,7 @@ export interface CompletePurchaseResult {
   updatedItems: PharmacyItem[];
   updatedParties: Party[];
   updatedPurchases: PurchaseRecord[];
+  updatedSupplierPayments: SupplierPaymentEntry[];
 }
 
 export function executePurchaseTransaction(params: {
@@ -2005,9 +2227,12 @@ export function executePurchaseTransaction(params: {
   lines: PurchaseDraftLine[];
   paidAmount: number;
   paymentMode: PaymentMode;
+  createdBy?: string;
+  createdByName?: string;
   currentItems: PharmacyItem[];
   currentParties: Party[];
   currentPurchases: PurchaseRecord[];
+  currentSupplierPayments?: SupplierPaymentEntry[];
 }): CompletePurchaseResult {
   const {
     supplier,
@@ -2015,6 +2240,8 @@ export function executePurchaseTransaction(params: {
     lines,
     paidAmount,
     paymentMode,
+    createdBy,
+    createdByName,
     currentItems,
     currentParties,
     currentPurchases,
@@ -2039,12 +2266,12 @@ export function executePurchaseTransaction(params: {
     }
   }
 
-  const totalAmount = lines.reduce(
-    (sum, line) => sum + line.unitCost * line.quantity,
-    0,
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  const totalAmount = round2(
+    lines.reduce((sum, line) => sum + line.unitCost * line.quantity, 0),
   );
-  const safePaid = Math.min(Math.max(0, paidAmount), totalAmount);
-  const balanceDue = Math.max(0, totalAmount - safePaid);
+  const safePaid = round2(Math.min(Math.max(0, paidAmount), totalAmount));
+  const balanceDue = round2(Math.max(0, totalAmount - safePaid));
 
   const nextPurchaseId =
     currentPurchases.reduce((max, p) => Math.max(max, p.id), 0) + 1;
@@ -2141,7 +2368,7 @@ export function executePurchaseTransaction(params: {
       quantity: line.quantity,
       unitCost: line.unitCost,
       sellingPrice: line.sellingPrice,
-      lineTotal: line.unitCost * line.quantity,
+      lineTotal: round2(line.unitCost * line.quantity),
     });
   });
 
@@ -2162,12 +2389,39 @@ export function executePurchaseTransaction(params: {
   // Increment supplier To Pay balance by unpaid balanceDue
   const updatedParties = currentParties.map((p) => {
     if (p.id === supplier.id && balanceDue > 0) {
-      return { ...p, balance: p.balance + balanceDue };
+      return { ...p, balance: round2(p.balance + balanceDue) };
     }
     return p;
   });
 
   const updatedPurchases = [newPurchase, ...currentPurchases];
+
+  const baseSupplierPayments =
+    params.currentSupplierPayments ?? loadSupplierPayments();
+  let updatedSupplierPayments = baseSupplierPayments;
+  if (safePaid > 0.005) {
+    const nextPayId =
+      baseSupplierPayments.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+    const initialPayment: SupplierPaymentEntry = {
+      id: nextPayId,
+      partyId: supplier.id,
+      purchaseId: newPurchase.id,
+      purchaseNumber: newPurchase.purchaseNumber,
+      supplierInvoiceNo: newPurchase.supplierInvoiceNo,
+      amount: safePaid,
+      paymentMode:
+        paymentMode === 'Credit/Party Ledger' ||
+        paymentMode === 'Credit / Khata'
+          ? 'Cash'
+          : paymentMode,
+      notes: 'Initial payment recorded with purchase bill',
+      createdAt: newPurchase.createdAt,
+      createdBy,
+      createdByName,
+    };
+    updatedSupplierPayments = [...baseSupplierPayments, initialPayment];
+    saveSupplierPayments(updatedSupplierPayments);
+  }
 
   saveItems(updatedItems);
   saveParties(updatedParties);
@@ -2178,5 +2432,170 @@ export function executePurchaseTransaction(params: {
     updatedItems,
     updatedParties,
     updatedPurchases,
+    updatedSupplierPayments,
+  };
+}
+
+export function recordSupplierPaymentTransaction(params: {
+  partyId: number;
+  amount: number;
+  purchaseId?: number | null;
+  paymentMode?: string;
+  reference?: string;
+  notes?: string;
+  paidAt?: string;
+  createdBy?: string;
+  createdByName?: string;
+  currentParties: Party[];
+  currentPurchases: PurchaseRecord[];
+  currentSupplierPayments?: SupplierPaymentEntry[];
+}): {
+  updatedParties: Party[];
+  updatedPurchases: PurchaseRecord[];
+  updatedSupplierPayments: SupplierPaymentEntry[];
+  entry: SupplierPaymentEntry | null;
+} {
+  const {
+    partyId,
+    amount,
+    purchaseId,
+    paymentMode = 'Cash',
+    reference,
+    notes,
+    paidAt,
+    createdBy,
+    createdByName,
+    currentParties,
+    currentPurchases,
+  } = params;
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  const basePayments = reconcileSupplierPayments(
+    currentPurchases,
+    params.currentSupplierPayments ?? loadSupplierPayments(),
+  );
+
+  const targetParty = currentParties.find((p) => p.id === partyId);
+  if (!targetParty || targetParty.type !== 'supplier') {
+    return {
+      updatedParties: currentParties,
+      updatedPurchases: currentPurchases,
+      updatedSupplierPayments: basePayments,
+      entry: null,
+    };
+  }
+
+  const rawAmount = Math.max(0, round2(Number(amount) || 0));
+  if (rawAmount <= 0) {
+    return {
+      updatedParties: currentParties,
+      updatedPurchases: currentPurchases,
+      updatedSupplierPayments: basePayments,
+      entry: null,
+    };
+  }
+
+  const isoTimestamp =
+    paidAt && paidAt.trim()
+      ? paidAt.includes('T')
+        ? new Date(paidAt).toISOString()
+        : new Date(`${paidAt.trim()}T12:00:00`).toISOString()
+      : new Date().toISOString();
+
+  let updatedPurchases = currentPurchases;
+  let appliedAmount = 0;
+  let linkedPurchaseNumber: string | undefined;
+  let linkedSupplierInvoiceNo: string | undefined;
+  let resolvedPurchaseId: number | null = null;
+
+  if (purchaseId !== undefined && purchaseId !== null) {
+    const targetBill = currentPurchases.find(
+      (p) => p.id === purchaseId && p.supplierId === partyId,
+    );
+    if (!targetBill) {
+      throw new Error('Selected purchase bill was not found for this supplier.');
+    }
+    const billDue = round2(Math.max(0, targetBill.balanceDue));
+    if (billDue <= 0.005) {
+      throw new Error(`Bill ${targetBill.purchaseNumber} is already paid in full.`);
+    }
+    appliedAmount = round2(Math.min(rawAmount, billDue));
+    if (appliedAmount <= 0) {
+      return {
+        updatedParties: currentParties,
+        updatedPurchases: currentPurchases,
+        updatedSupplierPayments: basePayments,
+        entry: null,
+      };
+    }
+
+    const nextPaid = round2(targetBill.paidAmount + appliedAmount);
+    const nextDue = Math.max(0, round2(targetBill.totalAmount - nextPaid));
+    updatedPurchases = currentPurchases.map((p) =>
+      p.id === targetBill.id
+        ? {
+            ...p,
+            paidAmount: nextPaid,
+            balanceDue: nextDue,
+          }
+        : p,
+    );
+    resolvedPurchaseId = targetBill.id;
+    linkedPurchaseNumber = targetBill.purchaseNumber;
+    linkedSupplierInvoiceNo = targetBill.supplierInvoiceNo;
+  } else {
+    appliedAmount =
+      targetParty.balance > 0
+        ? round2(Math.min(rawAmount, targetParty.balance))
+        : 0;
+    if (appliedAmount <= 0) {
+      return {
+        updatedParties: currentParties,
+        updatedPurchases: currentPurchases,
+        updatedSupplierPayments: basePayments,
+        entry: null,
+      };
+    }
+  }
+
+  const updatedParties = currentParties.map((p) =>
+    p.id === partyId
+      ? {
+          ...p,
+          balance: Math.max(0, round2(p.balance - appliedAmount)),
+        }
+      : p,
+  );
+
+  const nextId = basePayments.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+  const cleanNotes = notes?.trim();
+  const entry: SupplierPaymentEntry = {
+    id: nextId,
+    partyId,
+    purchaseId: resolvedPurchaseId,
+    purchaseNumber: linkedPurchaseNumber,
+    supplierInvoiceNo: linkedSupplierInvoiceNo,
+    amount: appliedAmount,
+    paymentMode,
+    reference: reference?.trim() || undefined,
+    notes:
+      cleanNotes ||
+      (linkedPurchaseNumber
+        ? `Payment allocated to ${linkedPurchaseNumber}`
+        : 'General supplier payable payment'),
+    createdAt: isoTimestamp,
+    createdBy,
+    createdByName,
+  };
+
+  const updatedSupplierPayments = [...basePayments, entry];
+  saveParties(updatedParties);
+  savePurchases(updatedPurchases);
+  saveSupplierPayments(updatedSupplierPayments);
+
+  return {
+    updatedParties,
+    updatedPurchases,
+    updatedSupplierPayments,
+    entry,
   };
 }

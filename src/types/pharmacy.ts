@@ -233,6 +233,8 @@ export interface PurchaseItemRecord {
   lineTotal: number;
 }
 
+export type PurchasePaymentStatus = 'Unpaid' | 'Partially Paid' | 'Paid';
+
 export interface PurchaseRecord {
   id: number;
   purchaseNumber: string;
@@ -245,6 +247,42 @@ export interface PurchaseRecord {
   paymentMode: PaymentMode;
   createdAt: string;
   items: PurchaseItemRecord[];
+}
+
+export interface SupplierPaymentEntry {
+  id: number;
+  partyId: number;
+  purchaseId?: number | null;
+  purchaseNumber?: string;
+  supplierInvoiceNo?: string;
+  amount: number;
+  paymentMode: string;
+  reference?: string;
+  notes?: string;
+  createdAt: string;
+  createdBy?: string;
+  createdByName?: string;
+}
+
+export interface SupplierBillLedgerRow {
+  purchase: PurchaseRecord;
+  status: PurchasePaymentStatus;
+  allocatedPayments: SupplierPaymentEntry[];
+}
+
+export interface SupplierLedgerStatement {
+  party: Party;
+  bills: SupplierBillLedgerRow[];
+  payments: SupplierPaymentEntry[];
+  totalPurchased: number;
+  totalPaidOnBills: number;
+  totalBillRemaining: number;
+  totalPaymentsRecorded: number;
+  unallocatedOrOpeningBalance: number;
+  unpaidBillCount: number;
+  partialBillCount: number;
+  paidBillCount: number;
+  currentBalanceDue: number;
 }
 
 export interface PurchaseDraftLine {

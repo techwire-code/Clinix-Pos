@@ -20,7 +20,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
   static const String _dbName = 'clinix_pharmacy_pos.db';
-  static const int _dbVersion = 7;
+  static const int _dbVersion = 8;
   static const String _settingsPrefsKey = 'clinix_app_settings_v2';
 
   Database? _database;
@@ -201,6 +201,74 @@ class DatabaseHelper {
     }
     if (oldVersion < 7) {
       await _ensureAuditSchema(db);
+    }
+    if (oldVersion < 8) {
+      await _createSupplierPaymentsTable(db);
+      await _backfillSupplierPayments(db);
+    }
+  }
+
+  Future<void> _createSupplierPaymentsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS supplier_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        party_id INTEGER NOT NULL,
+        purchase_id INTEGER,
+        purchase_number TEXT,
+        supplier_invoice_no TEXT,
+        amount REAL NOT NULL DEFAULT 0,
+        payment_mode TEXT NOT NULL DEFAULT 'Cash',
+        reference TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE,
+        FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE SET NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sup_pay_party ON supplier_payments(party_id, created_at)',
+    );
+  }
+
+  Future<void> _backfillSupplierPayments(Database db) async {
+    await _createSupplierPaymentsTable(db);
+    final purchaseRows = await db.query(
+      'purchases',
+      where: 'paid_amount > 0.005',
+      orderBy: 'created_at ASC, id ASC',
+    );
+    for (final p in purchaseRows) {
+      final purId = (p['id'] as num?)?.toInt();
+      final supId = (p['supplier_id'] as num?)?.toInt();
+      final paid = (p['paid_amount'] as num?)?.toDouble() ?? 0.0;
+      final purNo = p['purchase_number'] as String?;
+      if (purId == null || supId == null || paid <= 0.005) continue;
+
+      final existing = await db.query(
+        'supplier_payments',
+        columns: ['id'],
+        where: 'party_id = ? AND (purchase_id = ? OR purchase_number = ?)',
+        whereArgs: [supId, purId, purNo ?? ''],
+        limit: 1,
+      );
+      if (existing.isEmpty) {
+        final rawMode = (p['payment_mode'] as String?) ?? 'Cash';
+        final payMode = (rawMode == 'Credit / Khata' ||
+                rawMode == 'Credit/Party Ledger')
+            ? 'Cash'
+            : rawMode;
+        await db.insert('supplier_payments', {
+          'party_id': supId,
+          'purchase_id': purId,
+          'purchase_number': purNo,
+          'supplier_invoice_no': p['supplier_invoice_no'] as String?,
+          'amount': double.parse(paid.toStringAsFixed(2)),
+          'payment_mode': payMode,
+          'notes': 'Initial payment recorded with purchase bill',
+          'created_at':
+              (p['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+        });
+      }
     }
   }
 
@@ -554,9 +622,10 @@ class DatabaseHelper {
     await _createUsersTable(db);
     await _seedDefaultUsersIfEmpty(db);
 
-    // 9. Customer & Party Khata Ledger & Audited Receipt Logs
+    // 9. Customer & Party Khata Ledger, Audited Receipt Logs & Supplier Payments
     await _createKhataTable(db);
     await _ensureAuditSchema(db);
+    await _createSupplierPaymentsTable(db);
 
     await _seedInitialData(db);
   }
@@ -655,8 +724,10 @@ class DatabaseHelper {
       ),
     ];
 
+    final insertedItemIds = <int>[];
     for (final item in seedItems) {
-      await db.insert('items', item.toMap());
+      final itemId = await db.insert('items', item.toMap());
+      insertedItemIds.add(itemId);
     }
 
     await db.insert(
@@ -677,7 +748,7 @@ class DatabaseHelper {
         balance: 2450.0,
       ).toMap(),
     );
-    await db.insert(
+    final mullerId = await db.insert(
       'parties',
       const Party(
         name: 'Muller & Phipps Lahore Dist.',
@@ -687,7 +758,55 @@ class DatabaseHelper {
       ).toMap(),
     );
 
+    if (insertedItemIds.length >= 3) {
+      final purCreated = DateTime.now()
+          .subtract(const Duration(days: 4))
+          .toIso8601String();
+      final seededPurchaseId = await db.insert('purchases', {
+        'purchase_number': 'PUR-2026-0002',
+        'supplier_invoice_no': 'MP-LHR-88410',
+        'supplier_id': mullerId,
+        'total_amount': 28500.0,
+        'paid_amount': 10000.0,
+        'balance_due': 18500.0,
+        'payment_mode': 'Credit / Khata',
+        'created_at': purCreated,
+      });
+      await db.insert('purchase_items', {
+        'purchase_id': seededPurchaseId,
+        'item_id': insertedItemIds[1],
+        'item_name': 'Augmentin 625mg Tablets',
+        'batch_number': 'AUG-9021',
+        'expiry_date': '2027-04-15',
+        'quantity': 400,
+        'unit_cost': 44.25,
+        'line_total': 17700.0,
+      });
+      await db.insert('purchase_items', {
+        'purchase_id': seededPurchaseId,
+        'item_id': insertedItemIds[2],
+        'item_name': 'Risek 20mg Capsules',
+        'batch_number': 'GTZ-7712',
+        'expiry_date': '2027-11-20',
+        'quantity': 720,
+        'unit_cost': 15.0,
+        'line_total': 10800.0,
+      });
+      await db.insert('supplier_payments', {
+        'party_id': mullerId,
+        'purchase_id': seededPurchaseId,
+        'purchase_number': 'PUR-2026-0002',
+        'supplier_invoice_no': 'MP-LHR-88410',
+        'amount': 10000.0,
+        'payment_mode': 'Bank Transfer',
+        'reference': 'IBFT-MP-410',
+        'notes': 'Initial partial payment recorded with purchase bill',
+        'created_at': purCreated,
+      });
+    }
+
     await _backfillKhataLedger(db);
+    await _backfillSupplierPayments(db);
   }
 
   // ==================== ITEMS CRUD ====================
@@ -803,9 +922,31 @@ class DatabaseHelper {
     String? notes,
     String? reference,
     DateTime? collectedAt,
+    int? purchaseId,
   }) async {
     if (amountPaidOrCollected <= 0) return;
     final db = await database;
+    final partyCheck = await db.query(
+      'parties',
+      columns: ['type'],
+      where: 'id = ?',
+      whereArgs: [partyId],
+      limit: 1,
+    );
+    if (partyCheck.isEmpty) return;
+    if (partyCheck.first['type'] == 'supplier') {
+      await recordSupplierPayment(
+        partyId: partyId,
+        amount: amountPaidOrCollected,
+        purchaseId: purchaseId,
+        paymentMode: paymentMode,
+        reference: reference,
+        notes: notes,
+        paidAt: collectedAt,
+      );
+      return;
+    }
+
     await _createKhataTable(db);
     await db.transaction((txn) async {
       final partyRows = await txn.query(
@@ -840,6 +981,122 @@ class DatabaseHelper {
             : 'Collection received ($paymentMode)',
         'created_at': (collectedAt ?? DateTime.now()).toIso8601String(),
       });
+    });
+  }
+
+  Future<SupplierPaymentEntry?> recordSupplierPayment({
+    required int partyId,
+    required double amount,
+    int? purchaseId,
+    String paymentMode = 'Cash',
+    String? reference,
+    String? notes,
+    DateTime? paidAt,
+  }) async {
+    final round2 = (double v) => double.parse(v.toStringAsFixed(2));
+    final rawAmt = round2(amount < 0 ? 0.0 : amount);
+    if (rawAmt <= 0) return null;
+
+    final db = await database;
+    await _createSupplierPaymentsTable(db);
+    final timestamp = (paidAt ?? DateTime.now()).toIso8601String();
+    final cleanRef = reference?.trim();
+    final cleanNotes = notes?.trim();
+
+    return db.transaction((txn) async {
+      final partyRows = await txn.query(
+        'parties',
+        where: 'id = ?',
+        whereArgs: [partyId],
+        limit: 1,
+      );
+      if (partyRows.isEmpty || partyRows.first['type'] != 'supplier') {
+        return null;
+      }
+      final currentPartyBal =
+          round2((partyRows.first['balance'] as num?)?.toDouble() ?? 0.0);
+
+      double applied = 0.0;
+      int? resolvedPurchaseId;
+      String? linkedPurchaseNumber;
+      String? linkedSupplierInvoiceNo;
+
+      if (purchaseId != null) {
+        final billRows = await txn.query(
+          'purchases',
+          where: 'id = ? AND supplier_id = ?',
+          whereArgs: [purchaseId, partyId],
+          limit: 1,
+        );
+        if (billRows.isEmpty) {
+          throw StateError('Selected purchase bill was not found for this supplier.');
+        }
+        final bill = PurchaseRecord.fromMap(billRows.first);
+        final billDue = round2(bill.balanceDue < 0 ? 0.0 : bill.balanceDue);
+        if (billDue <= 0.005) {
+          throw StateError('Bill ${bill.purchaseNumber} is already paid in full.');
+        }
+        applied = rawAmt > billDue ? billDue : rawAmt;
+        if (applied <= 0) return null;
+
+        final nextPaid = round2(bill.paidAmount + applied);
+        final nextDue = round2((bill.totalAmount - nextPaid) < 0
+            ? 0.0
+            : (bill.totalAmount - nextPaid));
+
+        await txn.update(
+          'purchases',
+          {
+            'paid_amount': nextPaid,
+            'balance_due': nextDue,
+          },
+          where: 'id = ?',
+          whereArgs: [bill.id],
+        );
+
+        resolvedPurchaseId = bill.id;
+        linkedPurchaseNumber = bill.purchaseNumber;
+        linkedSupplierInvoiceNo = bill.supplierInvoiceNo;
+      } else {
+        applied = currentPartyBal > 0
+            ? (rawAmt > currentPartyBal ? currentPartyBal : rawAmt)
+            : 0.0;
+        if (applied <= 0) return null;
+      }
+
+      await txn.rawUpdate(
+        'UPDATE parties SET balance = MAX(0, ROUND(balance - ?, 2)) WHERE id = ?',
+        [applied, partyId],
+      );
+
+      final entry = SupplierPaymentEntry(
+        partyId: partyId,
+        purchaseId: resolvedPurchaseId,
+        purchaseNumber: linkedPurchaseNumber,
+        supplierInvoiceNo: linkedSupplierInvoiceNo,
+        amount: applied,
+        paymentMode: paymentMode,
+        reference: (cleanRef != null && cleanRef.isNotEmpty) ? cleanRef : null,
+        notes: (cleanNotes != null && cleanNotes.isNotEmpty)
+            ? cleanNotes
+            : (linkedPurchaseNumber != null
+                ? 'Payment allocated to $linkedPurchaseNumber'
+                : 'General supplier payable payment'),
+        createdAt: timestamp,
+      );
+      final insertedId = await txn.insert('supplier_payments', entry.toMap());
+      return SupplierPaymentEntry(
+        id: insertedId,
+        partyId: entry.partyId,
+        purchaseId: entry.purchaseId,
+        purchaseNumber: entry.purchaseNumber,
+        supplierInvoiceNo: entry.supplierInvoiceNo,
+        amount: entry.amount,
+        paymentMode: entry.paymentMode,
+        reference: entry.reference,
+        notes: entry.notes,
+        createdAt: entry.createdAt,
+      );
     });
   }
 
@@ -1574,13 +1831,18 @@ class DatabaseHelper {
     }
 
     final db = await database;
+    await _createSupplierPaymentsTable(db);
     final purchaseNo = await generateNextPurchaseNumber();
     final createdAt = DateTime.now().toIso8601String();
+    double round2(double v) => double.parse(v.toStringAsFixed(2));
 
-    final double totalAmount =
-        lines.fold(0.0, (sum, line) => sum + line.lineTotal);
-    final double safePaid = paidAmount.clamp(0.0, totalAmount).toDouble();
-    final double balanceDue = (totalAmount - safePaid).clamp(0.0, totalAmount).toDouble();
+    final double totalAmount = round2(
+      lines.fold(0.0, (sum, line) => sum + line.lineTotal),
+    );
+    final double safePaid =
+        round2(paidAmount.clamp(0.0, totalAmount).toDouble());
+    final double balanceDue =
+        round2((totalAmount - safePaid).clamp(0.0, totalAmount).toDouble());
 
     final header = PurchaseRecord(
       purchaseNumber: purchaseNo,
@@ -1648,9 +1910,22 @@ class DatabaseHelper {
 
       if (balanceDue > 0) {
         await txn.rawUpdate(
-          'UPDATE parties SET balance = balance + ? WHERE id = ?',
+          'UPDATE parties SET balance = ROUND(balance + ?, 2) WHERE id = ?',
           [balanceDue, supplier.id],
         );
+      }
+
+      if (safePaid > 0.005) {
+        await txn.insert('supplier_payments', {
+          'party_id': supplier.id,
+          'purchase_id': purchaseId,
+          'purchase_number': header.purchaseNumber,
+          'supplier_invoice_no': header.supplierInvoiceNo,
+          'amount': safePaid,
+          'payment_mode': paymentMode.isCreditKhata ? 'Cash' : paymentMode.dbValue,
+          'notes': 'Initial payment recorded with purchase bill',
+          'created_at': header.createdAt,
+        });
       }
 
       return purchaseId;
@@ -1690,6 +1965,119 @@ class DatabaseHelper {
       whereArgs: [purchaseId],
     );
     return rows.map(PurchaseItemRecord.fromMap).toList();
+  }
+
+  Future<List<PurchaseRecord>> getSupplierUnpaidBills(int supplierId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT pu.*, p.name as supplier_name
+      FROM purchases pu
+      INNER JOIN parties p ON pu.supplier_id = p.id
+      WHERE pu.supplier_id = ? AND pu.balance_due > 0.005
+      ORDER BY pu.created_at DESC, pu.id DESC
+    ''', [supplierId]);
+    return rows.map(PurchaseRecord.fromMap).toList();
+  }
+
+  Future<SupplierLedgerStatement> getSupplierLedgerStatement(
+    Party supplier,
+  ) async {
+    if (supplier.id == null) {
+      return SupplierLedgerStatement(
+        party: supplier,
+        bills: const [],
+        payments: const [],
+        totalPurchased: 0,
+        totalPaidOnBills: 0,
+        totalBillRemaining: 0,
+        totalPaymentsRecorded: 0,
+        unallocatedOrOpeningBalance: supplier.balance,
+        unpaidBillCount: 0,
+        partialBillCount: 0,
+        paidBillCount: 0,
+        currentBalanceDue: supplier.balance,
+      );
+    }
+
+    final db = await database;
+    await _backfillSupplierPayments(db);
+    double round2(double v) => double.parse(v.toStringAsFixed(2));
+
+    final freshPartyRows = await db.query(
+      'parties',
+      where: 'id = ?',
+      whereArgs: [supplier.id],
+      limit: 1,
+    );
+    final freshParty = freshPartyRows.isNotEmpty
+        ? Party.fromMap(freshPartyRows.first)
+        : supplier;
+
+    final purchaseRows = await db.rawQuery('''
+      SELECT pu.*, p.name as supplier_name
+      FROM purchases pu
+      INNER JOIN parties p ON pu.supplier_id = p.id
+      WHERE pu.supplier_id = ?
+      ORDER BY pu.created_at DESC, pu.id DESC
+    ''', [freshParty.id]);
+    final billsRaw = purchaseRows.map(PurchaseRecord.fromMap).toList();
+
+    final paymentRows = await db.query(
+      'supplier_payments',
+      where: 'party_id = ?',
+      whereArgs: [freshParty.id],
+      orderBy: 'created_at DESC, id DESC',
+    );
+    final payments = paymentRows.map(SupplierPaymentEntry.fromMap).toList();
+
+    final billRows = <SupplierBillLedgerRow>[];
+    for (final pur in billsRaw) {
+      final items =
+          pur.id != null ? await getPurchaseItems(pur.id!) : <PurchaseItemRecord>[];
+      final allocated = payments
+          .where((pay) =>
+              (pur.id != null && pay.purchaseId == pur.id) ||
+              (pur.purchaseNumber.isNotEmpty &&
+                  pay.purchaseNumber == pur.purchaseNumber))
+          .toList();
+      billRows.add(
+        SupplierBillLedgerRow(
+          purchase: pur,
+          status: pur.paymentStatus,
+          items: items,
+          allocatedPayments: allocated,
+        ),
+      );
+    }
+
+    final totalPurchased =
+        round2(billRows.fold(0.0, (s, b) => s + b.purchase.totalAmount));
+    final totalPaidOnBills =
+        round2(billRows.fold(0.0, (s, b) => s + b.purchase.paidAmount));
+    final totalBillRemaining =
+        round2(billRows.fold(0.0, (s, b) => s + b.purchase.balanceDue));
+    final totalPaymentsRecorded =
+        round2(payments.fold(0.0, (s, p) => s + p.amount));
+    final unallocated = round2(freshParty.balance - totalBillRemaining);
+
+    return SupplierLedgerStatement(
+      party: freshParty,
+      bills: billRows,
+      payments: payments,
+      totalPurchased: totalPurchased,
+      totalPaidOnBills: totalPaidOnBills,
+      totalBillRemaining: totalBillRemaining,
+      totalPaymentsRecorded: totalPaymentsRecorded,
+      unallocatedOrOpeningBalance: unallocated,
+      unpaidBillCount:
+          billRows.where((b) => b.status == PurchasePaymentStatus.unpaid).length,
+      partialBillCount: billRows
+          .where((b) => b.status == PurchasePaymentStatus.partiallyPaid)
+          .length,
+      paidBillCount:
+          billRows.where((b) => b.status == PurchasePaymentStatus.paid).length,
+      currentBalanceDue: round2(freshParty.balance),
+    );
   }
 
   // ==================== APP SETTINGS & BACKUP ====================
@@ -1801,11 +2189,12 @@ class DatabaseHelper {
     return backupPath;
   }
 
-  /// Exports a JSON snapshot including settings, managed staff users, items, parties, khata entries, and audit logs.
+  /// Exports a JSON snapshot including settings, managed staff users, items, parties, khata entries, supplier payments, and audit logs.
   Future<String> exportDatabaseBackupJson() async {
     final db = await database;
     await _createKhataTable(db);
     await _ensureAuditSchema(db);
+    await _createSupplierPaymentsTable(db);
     final settings = await getSettings();
     final users = await getUsers();
     final items = await getItems();
@@ -1814,6 +2203,10 @@ class DatabaseHelper {
     final purchases = await getRecentPurchases(limit: 1000);
     final khataRows = await db.query(
       'party_ledger_entries',
+      orderBy: 'created_at ASC, id ASC',
+    );
+    final supplierPaymentRows = await db.query(
+      'supplier_payments',
       orderBy: 'created_at ASC, id ASC',
     );
     final auditRows = await db.query(
@@ -1831,6 +2224,7 @@ class DatabaseHelper {
         'parties': parties.map((p) => p.toMap()).toList(),
         'sales': sales.map((s) => s.toMap()).toList(),
         'purchases': purchases.map((p) => p.toMap()).toList(),
+        'supplier_payments': supplierPaymentRows,
         'khata_entries': khataRows,
         'sale_audit_logs': auditRows,
       },
