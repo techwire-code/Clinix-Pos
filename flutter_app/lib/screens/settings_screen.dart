@@ -38,6 +38,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _pharmacyNameCtrl;
+  late final TextEditingController _shopShortCodeCtrl;
   late final TextEditingController _addressCtrl;
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _licenseCtrl;
@@ -83,6 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     final s = widget.initialSettings;
     _pharmacyNameCtrl = TextEditingController(text: s.pharmacyName);
+    _shopShortCodeCtrl = TextEditingController(text: s.shopShortCode);
     _addressCtrl = TextEditingController(text: s.address);
     _phoneCtrl = TextEditingController(text: s.phone);
     _licenseCtrl = TextEditingController(text: s.licenseNumber);
@@ -163,6 +165,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _pharmacyNameCtrl.dispose();
+    _shopShortCodeCtrl.dispose();
     _addressCtrl.dispose();
     _phoneCtrl.dispose();
     _licenseCtrl.dispose();
@@ -194,6 +197,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _applySettingsToState(PharmacySettings s) {
     _pharmacyNameCtrl.text = s.pharmacyName;
+    _shopShortCodeCtrl.text = s.shopShortCode;
     _addressCtrl.text = s.address;
     _phoneCtrl.text = s.phone;
     _licenseCtrl.text = s.licenseNumber;
@@ -247,6 +251,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return PharmacySettings(
       pharmacyName: name.isEmpty ? 'Clinix Community Pharmacy' : name,
+      shopShortCode:
+          PharmacySettings.normalizeShortCode(_shopShortCodeCtrl.text),
       address: addr.isEmpty ? '17 KM Ferozepur Road, Lahore' : addr,
       phone: _phoneCtrl.text.trim(),
       licenseNumber: _licenseCtrl.text.trim(),
@@ -1069,12 +1075,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: 'Printed on ESC/POS thermal receipts and A5 PDF invoices',
           ),
           _buildCard([
-            TextField(
-              controller: _pharmacyNameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Pharmacy Name',
-                border: OutlineInputBorder(),
-                isDense: true,
+            Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: _pharmacyNameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Pharmacy Name',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _shopShortCodeCtrl,
+                    maxLength: 8,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(
+                      labelText: 'Shop Short Code',
+                      hintText: 'CLX',
+                      counterText: '',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE6F4F1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFA7F3D0)),
+              ),
+              child: Text(
+                () {
+                  final code = PharmacySettings.normalizeShortCode(
+                    _shopShortCodeCtrl.text,
+                  );
+                  final now = DateTime.now();
+                  final ymd =
+                      '${now.year.toString().padLeft(4, '0')}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+                  return 'Receipt # Sequence: $code${ymd}1, $code${ymd}2, $code${ymd}3...';
+                }(),
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF065F46),
+                ),
               ),
             ),
             const SizedBox(height: 12),

@@ -20,7 +20,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
   static const String _dbName = 'clinix_pharmacy_pos.db';
-  static const int _dbVersion = 8;
+  static const int _dbVersion = 9;
   static const String _settingsPrefsKey = 'clinix_app_settings_v2';
 
   Database? _database;
@@ -56,6 +56,7 @@ class DatabaseHelper {
       CREATE TABLE IF NOT EXISTS app_settings (
         id INTEGER PRIMARY KEY CHECK(id = 1),
         pharmacy_name TEXT NOT NULL,
+        shop_short_code TEXT NOT NULL DEFAULT 'CLX',
         branch_address TEXT NOT NULL,
         address TEXT NOT NULL DEFAULT '17 KM Ferozepur Road, Lahore',
         phone_number TEXT NOT NULL DEFAULT '',
@@ -94,6 +95,7 @@ class DatabaseHelper {
 
     const expectedColumns = <String, String>{
       'pharmacy_name': "TEXT NOT NULL DEFAULT 'Clinix Community Pharmacy'",
+      'shop_short_code': "TEXT NOT NULL DEFAULT 'CLX'",
       'branch_address': "TEXT NOT NULL DEFAULT '17 KM Ferozepur Road, Lahore'",
       'address': "TEXT NOT NULL DEFAULT '17 KM Ferozepur Road, Lahore'",
       'phone_number': "TEXT NOT NULL DEFAULT '+92 42 35950011'",
@@ -206,6 +208,27 @@ class DatabaseHelper {
       await _createSupplierPaymentsTable(db);
       await _backfillSupplierPayments(db);
     }
+    if (oldVersion < 9) {
+      await _createExpensesTable(db);
+    }
+  }
+
+  Future<void> _createExpensesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'Delivery & Misc',
+        amount REAL NOT NULL DEFAULT 0,
+        date TEXT NOT NULL,
+        payment_mode TEXT NOT NULL DEFAULT 'Cash',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date)',
+    );
   }
 
   Future<void> _createSupplierPaymentsTable(Database db) async {
@@ -622,10 +645,11 @@ class DatabaseHelper {
     await _createUsersTable(db);
     await _seedDefaultUsersIfEmpty(db);
 
-    // 9. Customer & Party Khata Ledger, Audited Receipt Logs & Supplier Payments
+    // 9. Customer & Party Khata Ledger, Audited Receipt Logs, Supplier Payments & Expenses
     await _createKhataTable(db);
     await _ensureAuditSchema(db);
     await _createSupplierPaymentsTable(db);
+    await _createExpensesTable(db);
 
     await _seedInitialData(db);
   }
@@ -807,6 +831,18 @@ class DatabaseHelper {
 
     await _backfillKhataLedger(db);
     await _backfillSupplierPayments(db);
+
+    final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final nowIso = DateTime.now().toIso8601String();
+    await db.insert('expenses', {
+      'title': 'Pharmacy Counter Packaging & Thermal Rolls',
+      'category': 'Supplies & Packaging',
+      'amount': 650.0,
+      'date': todayStr,
+      'payment_mode': 'Cash',
+      'notes': '80mm thermal paper rolls & dispensing envelopes',
+      'created_at': nowIso,
+    });
   }
 
   // ==================== ITEMS CRUD ====================
@@ -1102,12 +1138,35 @@ class DatabaseHelper {
 
   // ==================== TRANSACTIONAL SALE COMPLETION ====================
 
-  Future<String> generateNextInvoiceNumber() async {
+  Future<String> generateNextInvoiceNumber({DateTime? date}) async {
     final db = await database;
-    final result = await db.rawQuery('SELECT COUNT(*) as cnt FROM sales');
-    final count = (Sqflite.firstIntValue(result) ?? 0) + 1;
-    final year = DateTime.now().year;
-    return 'CLX-$year-${count.toString().padLeft(4, '0')}';
+    final settings = await getSettings();
+    final code = PharmacySettings.normalizeShortCode(settings.shopShortCode);
+    final dt = date ?? DateTime.now();
+    final year = dt.year.toString().padLeft(4, '0');
+    final month = dt.month.toString().padLeft(2, '0');
+    final day = dt.day.toString().padLeft(2, '0');
+    final prefix = '$code$year$month$day';
+
+    final rows = await db.query(
+      'sales',
+      columns: ['invoice_number'],
+      where: 'UPPER(invoice_number) LIKE ?',
+      whereArgs: ['$prefix%'],
+    );
+
+    int maxSeq = 0;
+    final digitsPattern = RegExp(r'^\d+$');
+    for (final row in rows) {
+      final inv = (row['invoice_number'] as String? ?? '').trim().toUpperCase();
+      if (!inv.startsWith(prefix)) continue;
+      final suffix = inv.substring(prefix.length);
+      if (digitsPattern.hasMatch(suffix)) {
+        final parsed = int.tryParse(suffix) ?? 0;
+        if (parsed > maxSeq) maxSeq = parsed;
+      }
+    }
+    return '$prefix${maxSeq + 1}';
   }
 
   /// Atomically:
@@ -2195,12 +2254,17 @@ class DatabaseHelper {
     await _createKhataTable(db);
     await _ensureAuditSchema(db);
     await _createSupplierPaymentsTable(db);
+    await _createExpensesTable(db);
     final settings = await getSettings();
     final users = await getUsers();
     final items = await getItems();
     final parties = await getParties();
     final sales = await getRecentSales(limit: 1000);
     final purchases = await getRecentPurchases(limit: 1000);
+    final expenseRows = await db.query(
+      'expenses',
+      orderBy: 'date DESC, id DESC',
+    );
     final khataRows = await db.query(
       'party_ledger_entries',
       orderBy: 'created_at ASC, id ASC',
@@ -2224,6 +2288,7 @@ class DatabaseHelper {
         'parties': parties.map((p) => p.toMap()).toList(),
         'sales': sales.map((s) => s.toMap()).toList(),
         'purchases': purchases.map((p) => p.toMap()).toList(),
+        'expenses': expenseRows,
         'supplier_payments': supplierPaymentRows,
         'khata_entries': khataRows,
         'sale_audit_logs': auditRows,
@@ -2461,4 +2526,281 @@ class DatabaseHelper {
     final db = await database;
     await db.delete('users', where: 'id = ?', whereArgs: [userId]);
   }
+
+  // ==================== EXPENSES & FINANCIAL REPORTS ====================
+
+  String _toLocalDateKey(String isoOrDate) {
+    final clean = isoOrDate.trim();
+    if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(clean)) {
+      return clean;
+    }
+    final parsed = DateTime.tryParse(clean);
+    if (parsed == null) {
+      return clean.length >= 10 ? clean.substring(0, 10) : clean;
+    }
+    final local = parsed.isUtc ? parsed.toLocal() : parsed;
+    return '${local.year.toString().padLeft(4, '0')}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<List<ExpenseRecord>> getExpenses({
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
+    final db = await database;
+    await _createExpensesTable(db);
+    final rows = await db.query(
+      'expenses',
+      orderBy: 'date DESC, id DESC',
+    );
+    final all = rows.map(ExpenseRecord.fromMap).toList();
+    if (fromDate == null && toDate == null) return all;
+
+    DateTime? effFrom = fromDate;
+    DateTime? effTo = toDate;
+    if (effFrom != null && effTo != null && effFrom.isAfter(effTo)) {
+      final tmp = effFrom;
+      effFrom = effTo;
+      effTo = tmp;
+    }
+    final fromKey = effFrom != null
+        ? DateFormat('yyyy-MM-dd').format(effFrom)
+        : null;
+    final toKey =
+        effTo != null ? DateFormat('yyyy-MM-dd').format(effTo) : null;
+
+    return all.where((e) {
+      final dk = _toLocalDateKey(e.date);
+      if (fromKey != null && dk.compareTo(fromKey) < 0) return false;
+      if (toKey != null && dk.compareTo(toKey) > 0) return false;
+      return true;
+    }).toList();
+  }
+
+  Future<int> insertExpense(ExpenseRecord expense) async {
+    final db = await database;
+    await _createExpensesTable(db);
+    final cleanTitle = expense.title.trim();
+    if (cleanTitle.isEmpty) {
+      throw ArgumentError('Expense title is required.');
+    }
+    if (expense.amount <= 0) {
+      throw ArgumentError('Expense amount must be greater than zero.');
+    }
+    return db.insert(
+      'expenses',
+      expense.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deleteExpense(int id) async {
+    final db = await database;
+    await _createExpensesTable(db);
+    await db.delete('expenses', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<ReportSummaryBundle> getFinancialReportBundle({
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
+    final db = await database;
+    await _ensureAuditSchema(db);
+    await _createExpensesTable(db);
+
+    DateTime? effFrom = fromDate;
+    DateTime? effTo = toDate;
+    if (effFrom != null && effTo != null && effFrom.isAfter(effTo)) {
+      final tmp = effFrom;
+      effFrom = effTo;
+      effTo = tmp;
+    }
+    final String? fromKey =
+        effFrom != null ? DateFormat('yyyy-MM-dd').format(effFrom) : null;
+    final String? toKey =
+        effTo != null ? DateFormat('yyyy-MM-dd').format(effTo) : null;
+
+    bool inRange(String dateKey) {
+      if (fromKey != null && dateKey.compareTo(fromKey) < 0) return false;
+      if (toKey != null && dateKey.compareTo(toKey) > 0) return false;
+      return true;
+    }
+
+    final saleRows = await db.rawQuery('''
+      SELECT s.*, COALESCE(p.name, 'Walk-in Customer') as party_name
+      FROM sales s
+      LEFT JOIN parties p ON s.party_id = p.id
+      ORDER BY s.created_at DESC, s.id DESC
+    ''');
+    final filteredSales = <SaleRecord>[];
+    for (final row in saleRows) {
+      final sr = SaleRecord.fromMap(row);
+      final dk = _toLocalDateKey(sr.createdAt);
+      if (inRange(dk)) {
+        filteredSales.add(sr);
+      }
+    }
+
+    final filteredExpenses = await getExpenses(fromDate: effFrom, toDate: effTo);
+
+    double round2(double v) => double.parse(v.toStringAsFixed(2));
+
+    // Aggregate Daily buckets strictly from filteredSales & filteredExpenses
+    final dailyMap = <String, Map<String, dynamic>>{};
+    Map<String, dynamic> ensureDay(String dk) => dailyMap.putIfAbsent(dk, () {
+          return {
+            'receiptCount': 0,
+            'expenseCount': 0,
+            'grossSales': 0.0,
+            'discounts': 0.0,
+            'netSales': 0.0,
+            'totalCost': 0.0,
+            'grossProfit': 0.0,
+            'expenses': 0.0,
+          };
+        });
+
+    for (final s in filteredSales) {
+      final dk = _toLocalDateKey(s.createdAt);
+      final b = ensureDay(dk);
+      b['receiptCount'] = (b['receiptCount'] as int) + 1;
+      b['grossSales'] = (b['grossSales'] as double) + s.subtotal;
+      b['discounts'] = (b['discounts'] as double) + s.discountAmount;
+      b['netSales'] = (b['netSales'] as double) + s.netPayable;
+      b['totalCost'] = (b['totalCost'] as double) + s.totalCost;
+      b['grossProfit'] = (b['grossProfit'] as double) + s.netProfit;
+    }
+    for (final e in filteredExpenses) {
+      final dk = _toLocalDateKey(e.date);
+      final b = ensureDay(dk);
+      b['expenseCount'] = (b['expenseCount'] as int) + 1;
+      b['expenses'] = (b['expenses'] as double) + e.amount;
+    }
+
+    final sortedDayKeys = dailyMap.keys.toList()..sort((a, b) => b.compareTo(a));
+    final dailyRows = sortedDayKeys.map((dk) {
+      final b = dailyMap[dk]!;
+      final netSales = round2(b['netSales'] as double);
+      final grossProfit = round2(b['grossProfit'] as double);
+      final exp = round2(b['expenses'] as double);
+      final trueNet = round2(grossProfit - exp);
+      final margin = netSales > 0 ? (trueNet / netSales) * 100 : 0.0;
+      return DailyReportRow(
+        dateKey: dk,
+        receiptCount: b['receiptCount'] as int,
+        expenseCount: b['expenseCount'] as int,
+        grossSales: round2(b['grossSales'] as double),
+        discounts: round2(b['discounts'] as double),
+        netSales: netSales,
+        totalCost: round2(b['totalCost'] as double),
+        grossProfit: grossProfit,
+        expenses: exp,
+        trueNetProfit: trueNet,
+        netMarginPct: margin,
+      );
+    }).toList();
+
+    // Aggregate Monthly buckets strictly from filteredSales & filteredExpenses
+    final monthlyMap = <String, Map<String, dynamic>>{};
+    Map<String, dynamic> ensureMonth(String mk) => monthlyMap.putIfAbsent(mk, () {
+          return {
+            'receiptCount': 0,
+            'expenseCount': 0,
+            'grossSales': 0.0,
+            'discounts': 0.0,
+            'netSales': 0.0,
+            'totalCost': 0.0,
+            'grossProfit': 0.0,
+            'expenses': 0.0,
+          };
+        });
+
+    for (final s in filteredSales) {
+      final dk = _toLocalDateKey(s.createdAt);
+      final mk = dk.length >= 7 ? dk.substring(0, 7) : dk;
+      final b = ensureMonth(mk);
+      b['receiptCount'] = (b['receiptCount'] as int) + 1;
+      b['grossSales'] = (b['grossSales'] as double) + s.subtotal;
+      b['discounts'] = (b['discounts'] as double) + s.discountAmount;
+      b['netSales'] = (b['netSales'] as double) + s.netPayable;
+      b['totalCost'] = (b['totalCost'] as double) + s.totalCost;
+      b['grossProfit'] = (b['grossProfit'] as double) + s.netProfit;
+    }
+    for (final e in filteredExpenses) {
+      final dk = _toLocalDateKey(e.date);
+      final mk = dk.length >= 7 ? dk.substring(0, 7) : dk;
+      final b = ensureMonth(mk);
+      b['expenseCount'] = (b['expenseCount'] as int) + 1;
+      b['expenses'] = (b['expenses'] as double) + e.amount;
+    }
+
+    final sortedMonthKeys = monthlyMap.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+    final monthlyRows = sortedMonthKeys.map((mk) {
+      final b = monthlyMap[mk]!;
+      final parts = mk.split('-');
+      String label = mk;
+      if (parts.length == 2) {
+        final yr = int.tryParse(parts[0]);
+        final mo = int.tryParse(parts[1]);
+        if (yr != null && mo != null) {
+          label = DateFormat('MMM yyyy').format(DateTime(yr, mo, 1));
+        }
+      }
+      final netSales = round2(b['netSales'] as double);
+      final grossProfit = round2(b['grossProfit'] as double);
+      final exp = round2(b['expenses'] as double);
+      final trueNet = round2(grossProfit - exp);
+      final margin = netSales > 0 ? (trueNet / netSales) * 100 : 0.0;
+      return MonthlyReportRow(
+        monthKey: mk,
+        label: label,
+        receiptCount: b['receiptCount'] as int,
+        expenseCount: b['expenseCount'] as int,
+        grossSales: round2(b['grossSales'] as double),
+        discounts: round2(b['discounts'] as double),
+        netSales: netSales,
+        totalCost: round2(b['totalCost'] as double),
+        grossProfit: grossProfit,
+        expenses: exp,
+        trueNetProfit: trueNet,
+        netMarginPct: margin,
+      );
+    }).toList();
+
+    final grossSales = round2(filteredSales.fold(0.0, (s, r) => s + r.subtotal));
+    final discounts =
+        round2(filteredSales.fold(0.0, (s, r) => s + r.discountAmount));
+    final netSales = round2(filteredSales.fold(0.0, (s, r) => s + r.netPayable));
+    final totalCost = round2(filteredSales.fold(0.0, (s, r) => s + r.totalCost));
+    final grossProfit =
+        round2(filteredSales.fold(0.0, (s, r) => s + r.netProfit));
+    final totalExpenses =
+        round2(filteredExpenses.fold(0.0, (s, e) => s + e.amount));
+    final trueNetProfit = round2(grossProfit - totalExpenses);
+    final grossMarginPct =
+        netSales > 0 ? (grossProfit / netSales) * 100 : 0.0;
+    final netMarginPct =
+        netSales > 0 ? (trueNetProfit / netSales) * 100 : 0.0;
+
+    return ReportSummaryBundle(
+      totals: ReportPeriodTotals(
+        receiptCount: filteredSales.length,
+        expenseCount: filteredExpenses.length,
+        grossSales: grossSales,
+        discounts: discounts,
+        netSales: netSales,
+        totalCost: totalCost,
+        grossProfit: grossProfit,
+        totalExpenses: totalExpenses,
+        trueNetProfit: trueNetProfit,
+        grossMarginPct: grossMarginPct,
+        netMarginPct: netMarginPct,
+      ),
+      dailyRows: dailyRows,
+      monthlyRows: monthlyRows,
+      receipts: filteredSales,
+      expenses: filteredExpenses,
+    );
+  }
 }
+

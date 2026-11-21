@@ -38,6 +38,7 @@ import {
   CURRENCY_PRESETS,
   formatDateBySettings,
   formatMoney,
+  normalizeShopShortCode,
 } from '../services/localDb';
 import { generateTestEscPosReceipt } from '../services/escPosGenerator';
 
@@ -193,6 +194,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       ...draft,
       pharmacyName:
         draft.pharmacyName.trim() || 'Clinix Community Pharmacy',
+      shopShortCode: normalizeShopShortCode(draft.shopShortCode),
       address: draft.address.trim() || '17 KM Ferozepur Road, Lahore',
       phone: draft.phone.trim(),
       licenseNumber: draft.licenseNumber.trim(),
@@ -817,23 +819,62 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           </div>
 
           <div className="space-y-3.5">
-            <div>
-              <label
-                htmlFor="settings-pharmacy-name"
-                className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
-              >
-                Pharmacy Name
-              </label>
-              <input
-                id="settings-pharmacy-name"
-                type="text"
-                value={draft.pharmacyName}
-                onChange={(e) =>
-                  setDraft((p) => ({ ...p, pharmacyName: e.target.value }))
-                }
-                placeholder="Clinix Community Pharmacy"
-                className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="sm:col-span-2">
+                <label
+                  htmlFor="settings-pharmacy-name"
+                  className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                >
+                  Pharmacy Name
+                </label>
+                <input
+                  id="settings-pharmacy-name"
+                  type="text"
+                  value={draft.pharmacyName}
+                  onChange={(e) =>
+                    setDraft((p) => ({ ...p, pharmacyName: e.target.value }))
+                  }
+                  placeholder="Clinix Community Pharmacy"
+                  className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="settings-shop-short-code"
+                  className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                >
+                  Shop Short Code
+                </label>
+                <input
+                  id="settings-shop-short-code"
+                  type="text"
+                  maxLength={8}
+                  value={draft.shopShortCode}
+                  onChange={(e) =>
+                    setDraft((p) => ({
+                      ...p,
+                      shopShortCode: e.target.value
+                        .replace(/[^a-zA-Z0-9]/g, '')
+                        .toUpperCase(),
+                    }))
+                  }
+                  placeholder="CLX"
+                  className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-sm font-bold uppercase text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200">
+              <span>Receipt # Sequence: </span>
+              <strong className="font-mono-tabular">
+                {(() => {
+                  const code = normalizeShopShortCode(draft.shopShortCode);
+                  const now = new Date();
+                  const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+                  return `${code}${ymd}1, ${code}${ymd}2, ${code}${ymd}3...`;
+                })()}
+              </strong>
             </div>
 
             <div>

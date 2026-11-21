@@ -6,6 +6,7 @@ import 'screens/login_screen.dart';
 import 'screens/parties_screen.dart';
 import 'screens/pos_screen.dart';
 import 'screens/printer_settings_screen.dart';
+import 'screens/reports_screen.dart';
 import 'screens/settings_screen.dart';
 import 'utils/currency_formatter.dart';
 
@@ -32,7 +33,7 @@ class ClinixPharmacyApp extends StatelessWidget {
   }
 }
 
-enum _ShellSection { pos, parties, printer, settings, users }
+enum _ShellSection { pos, parties, reports, printer, settings, users }
 
 class _ClinixHomeShell extends StatefulWidget {
   const _ClinixHomeShell();
@@ -163,6 +164,13 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
         ),
       if (isManagerOrAdmin)
         (
+          section: _ShellSection.reports,
+          label: 'Reports & Profit',
+          icon: Icons.assessment_outlined,
+          selectedIcon: Icons.assessment,
+        ),
+      if (isManagerOrAdmin)
+        (
           section: _ShellSection.printer,
           label: 'Thermal Printer',
           icon: Icons.print_outlined,
@@ -189,12 +197,29 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
     if (selectedIndex < 0) selectedIndex = 0;
     final currentSection = availableDestinations[selectedIndex].section;
 
+    final bottomNavDestinations = availableDestinations
+        .where((d) => d.section != _ShellSection.users)
+        .toList();
+    int bottomSelectedIndex = bottomNavDestinations
+        .indexWhere((d) => d.section == currentSection);
+    if (bottomSelectedIndex < 0) {
+      bottomSelectedIndex = bottomNavDestinations
+          .indexWhere((d) => d.section == _ShellSection.settings);
+    }
+    if (bottomSelectedIndex < 0) bottomSelectedIndex = 0;
+
     Widget activePage;
     switch (currentSection) {
       case _ShellSection.parties:
         activePage = PartiesScreen(
           settings: _settings,
           currentUser: user,
+          onOpenDrawer: _openDrawer,
+        );
+        break;
+      case _ShellSection.reports:
+        activePage = ReportsScreen(
+          settings: _settings,
           onOpenDrawer: _openDrawer,
         );
         break;
@@ -297,12 +322,12 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
         ],
       ),
       body: activePage,
-      bottomNavigationBar: availableDestinations.length > 1
+      bottomNavigationBar: bottomNavDestinations.length > 1
           ? NavigationBar(
-              selectedIndex: selectedIndex,
+              selectedIndex: bottomSelectedIndex,
               onDestinationSelected: (idx) =>
-                  _selectSection(availableDestinations[idx].section),
-              destinations: availableDestinations
+                  _selectSection(bottomNavDestinations[idx].section),
+              destinations: bottomNavDestinations
                   .map(
                     (dest) => NavigationDestination(
                       icon: Icon(dest.icon),
@@ -311,9 +336,11 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
                           ? 'Printer'
                           : dest.label == 'Parties & Khata'
                               ? 'Khata'
-                              : dest.label == 'Users & Roles'
-                                  ? 'Users'
-                                  : dest.label,
+                              : dest.label == 'Reports & Profit'
+                                  ? 'Reports'
+                                  : dest.label == 'Users & Roles'
+                                      ? 'Users'
+                                      : dest.label,
                     ),
                   )
                   .toList(),

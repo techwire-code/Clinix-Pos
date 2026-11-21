@@ -157,6 +157,7 @@ export const COMMON_TIMEZONES: string[] = [
 
 export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
   pharmacyName: 'Clinix Community Pharmacy',
+  shopShortCode: 'CLX',
   address: '17 KM Ferozepur Road, Lahore',
   phone: '+92 42 35950011',
   licenseNumber: 'DL-LHR-04892',
@@ -181,6 +182,43 @@ export const DEFAULT_PHARMACY_SETTINGS: PharmacySettings = {
   showProfitToStaff: false,
   activeRole: 'admin',
 };
+
+export function normalizeShopShortCode(raw?: string | null): string {
+  const cleaned = (raw ?? '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 8);
+  return cleaned.length > 0 ? cleaned : DEFAULT_PHARMACY_SETTINGS.shopShortCode;
+}
+
+export function generateNextInvoiceNumber(
+  existingSales: SaleRecord[],
+  shortCodeInput?: string | null,
+  dateInput: Date = new Date(),
+): string {
+  const code = normalizeShopShortCode(
+    shortCodeInput ?? loadSettings().shopShortCode,
+  );
+  const year = String(dateInput.getFullYear()).padStart(4, '0');
+  const month = String(dateInput.getMonth() + 1).padStart(2, '0');
+  const day = String(dateInput.getDate()).padStart(2, '0');
+  const prefix = `${code}${year}${month}${day}`;
+
+  let maxSeq = 0;
+  for (const sale of existingSales) {
+    const inv = (sale.invoiceNumber || '').trim().toUpperCase();
+    if (!inv.startsWith(prefix)) continue;
+    const suffix = inv.slice(prefix.length);
+    if (/^\d+$/.test(suffix)) {
+      const parsed = Number.parseInt(suffix, 10);
+      if (Number.isFinite(parsed) && parsed > maxSeq) {
+        maxSeq = parsed;
+      }
+    }
+  }
+
+  return `${prefix}${maxSeq + 1}`;
+}
 
 export function toThermalWidth(width: 58 | 80 | ThermalWidth | undefined): ThermalWidth {
   if (width === 58 || width === '58mm') return '58mm';
@@ -1011,6 +1049,7 @@ export function loadSettings(): PharmacySettings {
         typeof existing.pharmacyName === 'string' && existing.pharmacyName.trim()
           ? existing.pharmacyName.trim()
           : DEFAULT_PHARMACY_SETTINGS.pharmacyName,
+      shopShortCode: normalizeShopShortCode(existing.shopShortCode),
       address:
         typeof rawAddress === 'string' && rawAddress.trim()
           ? rawAddress.trim()
@@ -1119,6 +1158,7 @@ export function saveSettings(next: PharmacySettings): PharmacySettings {
   const normalized: PharmacySettings = {
     pharmacyName:
       next.pharmacyName.trim() || DEFAULT_PHARMACY_SETTINGS.pharmacyName,
+    shopShortCode: normalizeShopShortCode(next.shopShortCode),
     address: next.address.trim() || DEFAULT_PHARMACY_SETTINGS.address,
     phone: next.phone.trim(),
     licenseNumber: next.licenseNumber.trim(),
@@ -1620,8 +1660,7 @@ export function executeSaleTransaction(params: {
 
   const nextSaleId =
     currentSales.reduce((max, s) => Math.max(max, s.id), 0) + 1;
-  const year = new Date().getFullYear();
-  const invoiceNumber = `CLX-${year}-${String(nextSaleId).padStart(4, '0')}`;
+  const invoiceNumber = generateNextInvoiceNumber(currentSales);
 
   const saleItems: SaleItemRecord[] = cartLines.map((line, index) => {
     const gross = line.item.sellingPrice * line.quantity;

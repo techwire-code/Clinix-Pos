@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Calendar,
   ChevronDown,
   ChevronUp,
   Download,
+  FileText,
   Plus,
   Printer,
   Receipt,
@@ -32,6 +34,7 @@ import {
 } from '../services/localDb';
 import { ThemeMode } from '../services/themeService';
 import { downloadCsvFile } from '../services/csvExport';
+import { downloadFinancialReportPdf } from '../services/reportPdfGenerator';
 
 interface ReportsAndExpensesWorkspaceProps {
   sales: SaleRecord[];
@@ -59,6 +62,23 @@ function getTodayDateKey(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+function shiftDaysDateKey(daysDelta: number): string {
+  const dt = new Date();
+  dt.setDate(dt.getDate() + daysDelta);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+function getMonthBounds(year: number, monthIndex0: number): {
+  start: string;
+  end: string;
+} {
+  const startDt = new Date(year, monthIndex0, 1);
+  const endDt = new Date(year, monthIndex0 + 1, 0);
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { start: fmt(startDt), end: fmt(endDt) };
+}
+
 function toLocalDateKey(isoOrDate: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDate)) return isoOrDate;
   const dt = new Date(isoOrDate);
@@ -72,6 +92,18 @@ function formatMonthLabel(monthKey: string): string {
   const dt = new Date(yr, mo - 1, 1);
   return dt.toLocaleDateString('en-PK', { month: 'short', year: 'numeric' });
 }
+
+function isDateKeyInRange(
+  dateKey: string,
+  fromDate: string,
+  toDate: string,
+): boolean {
+  if (fromDate && dateKey < fromDate) return false;
+  if (toDate && dateKey > toDate) return false;
+  return true;
+}
+
+type DateRangePreset = 'all' | 'today' | '7d' | '30d' | 'month' | 'lastMonth' | 'custom';
 
 export const ReportsAndExpensesWorkspace: React.FC<
   ReportsAndExpensesWorkspaceProps
@@ -89,8 +121,12 @@ export const ReportsAndExpensesWorkspace: React.FC<
   const csvCur = getCurrencyLabel(settings, true);
   const digits = settings?.decimalDigits ?? 2;
   const [subTab, setSubTab] = useState<ReportSubTab>('receipts');
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateKey);
-  const [showAllReceiptDates, setShowAllReceiptDates] = useState<boolean>(true);
+
+  // Shared Date-to-Date Range Filter across all reports (Daily, Monthly, Receipts, Expenses)
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
+  const [activePreset, setActivePreset] = useState<DateRangePreset>('all');
+
   const [receiptSearch, setReceiptSearch] = useState('');
   const [expandedSaleId, setExpandedSaleId] = useState<number | null>(null);
 
@@ -108,28 +144,119 @@ export const ReportsAndExpensesWorkspace: React.FC<
   const [expenseFilterCategory, setExpenseFilterCategory] = useState<string>('All');
   const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>('All');
 
-  // All-time totals
-  const overallTotals = useMemo(() => {
-    const totalSales = sales.reduce((s, r) => s + r.netPayable, 0);
-    const totalCost = sales.reduce((s, r) => s + r.totalCost, 0);
-    const grossProfit = sales.reduce((s, r) => s + r.netProfit, 0);
-    const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+  const { effectiveFrom, effectiveTo } = useMemo(() => {
+    if (fromDate && toDate && fromDate > toDate) {
+      return { effectiveFrom: toDate, effectiveTo: fromDate };
+    }
+    return { effectiveFrom: fromDate, effectiveTo: toDate };
+  }, [fromDate, toDate]);
+
+  const hasDateFilter = Boolean(effectiveFrom || effectiveTo);
+
+  const rangeScopeLabel = useMemo(() => {
+    if (!effectiveFrom && !effectiveTo) return 'All Recorded Dates';
+    if (effectiveFrom && effectiveTo) {
+      if (effectiveFrom === effectiveTo) {
+        return formatDateBySettings(effectiveFrom, settings);
+      }
+      return `${formatDateBySettings(effectiveFrom, settings)} – ${formatDateBySettings(effectiveTo, settings)}`;
+    }
+    if (effectiveFrom) {
+      return `From ${formatDateBySettings(effectiveFrom, settings)}`;
+    }
+    return `Up to ${formatDateBySettings(effectiveTo, settings)}`;
+  }, [effectiveFrom, effectiveTo, settings]);
+
+  const applyRangePreset = (preset: DateRangePreset) => {
+    const today = getTodayDateKey();
+    const now = new Date();
+    setActivePreset(preset);
+    switch (preset) {
+      case 'all':
+        setFromDate('');
+        setToDate('');
+        break;
+      case 'today':
+        setFromDate(today);
+        setToDate(today);
+        break;
+      case '7d':
+        setFromDate(shiftDaysDateKey(-6));
+        setToDate(today);
+        break;
+      case '30d':
+        setFromDate(shiftDaysDateKey(-29));
+        setToDate(today);
+        break;
+      case 'month': {
+        const bounds = getMonthBounds(now.getFullYear(), now.getMonth());
+        setFromDate(bounds.start);
+        setToDate(today);
+        break;
+      }
+      case 'lastMonth': {
+        const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const bounds = getMonthBounds(prev.getFullYear(), prev.getMonth());
+        setFromDate(bounds.start);
+        setToDate(bounds.end);
+        break;
+      }
+      case 'custom':
+      default:
+        break;
+    }
+  };
+
+  // Respective-date filtered datasets
+  const rangeFilteredSales = useMemo(() => {
+    if (!hasDateFilter) return sales;
+    return sales.filter((sale) =>
+      isDateKeyInRange(toLocalDateKey(sale.createdAt), effectiveFrom, effectiveTo),
+    );
+  }, [sales, hasDateFilter, effectiveFrom, effectiveTo]);
+
+  const rangeFilteredExpenses = useMemo(() => {
+    if (!hasDateFilter) return expenses;
+    return expenses.filter((exp) =>
+      isDateKeyInRange(toLocalDateKey(exp.date), effectiveFrom, effectiveTo),
+    );
+  }, [expenses, hasDateFilter, effectiveFrom, effectiveTo]);
+
+  // Period Totals (reflects exact selected date / from-to date range, or all-time when cleared)
+  const periodTotals = useMemo(() => {
+    const grossSales = rangeFilteredSales.reduce((s, r) => s + r.subtotal, 0);
+    const totalDiscounts = rangeFilteredSales.reduce(
+      (s, r) => s + r.discountAmount,
+      0,
+    );
+    const totalSales = rangeFilteredSales.reduce((s, r) => s + r.netPayable, 0);
+    const totalCost = rangeFilteredSales.reduce((s, r) => s + r.totalCost, 0);
+    const grossProfit = rangeFilteredSales.reduce((s, r) => s + r.netProfit, 0);
+    const totalExpenses = rangeFilteredExpenses.reduce((s, e) => s + e.amount, 0);
     const trueNetProfit = grossProfit - totalExpenses;
+    const grossMarginPct =
+      totalSales > 0 ? (grossProfit / totalSales) * 100 : 0;
+    const netMarginPct =
+      totalSales > 0 ? (trueNetProfit / totalSales) * 100 : 0;
     return {
+      receiptCount: rangeFilteredSales.length,
+      expenseCount: rangeFilteredExpenses.length,
+      grossSales,
+      totalDiscounts,
       totalSales,
       totalCost,
       grossProfit,
       totalExpenses,
       trueNetProfit,
+      grossMarginPct,
+      netMarginPct,
     };
-  }, [sales, expenses]);
+  }, [rangeFilteredSales, rangeFilteredExpenses]);
 
   // 1. Receipt-by-receipt profit filtered view
   const filteredReceipts = useMemo(() => {
     const q = receiptSearch.trim().toLowerCase();
-    return sales.filter((sale) => {
-      const dateKey = toLocalDateKey(sale.createdAt);
-      if (!showAllReceiptDates && dateKey !== selectedDate) return false;
+    return rangeFilteredSales.filter((sale) => {
       if (!q) return true;
       return (
         sale.invoiceNumber.toLowerCase().includes(q) ||
@@ -138,9 +265,10 @@ export const ReportsAndExpensesWorkspace: React.FC<
         sale.paymentMode.toLowerCase().includes(q)
       );
     });
-  }, [sales, showAllReceiptDates, selectedDate, receiptSearch]);
+  }, [rangeFilteredSales, receiptSearch]);
 
   const receiptScopeTotals = useMemo(() => {
+    const gross = filteredReceipts.reduce((s, r) => s + r.subtotal, 0);
     const revenue = filteredReceipts.reduce((s, r) => s + r.netPayable, 0);
     const discounts = filteredReceipts.reduce(
       (s, r) => s + r.discountAmount,
@@ -148,23 +276,24 @@ export const ReportsAndExpensesWorkspace: React.FC<
     );
     const cogs = filteredReceipts.reduce((s, r) => s + r.totalCost, 0);
     const profit = filteredReceipts.reduce((s, r) => s + r.netProfit, 0);
-    const dayExpenses = showAllReceiptDates
-      ? expenses.reduce((s, e) => s + e.amount, 0)
-      : expenses
-          .filter((e) => toLocalDateKey(e.date) === selectedDate)
-          .reduce((s, e) => s + e.amount, 0);
+    const rangeExpenses = rangeFilteredExpenses.reduce(
+      (s, e) => s + e.amount,
+      0,
+    );
     return {
       count: filteredReceipts.length,
+      gross,
       revenue,
       discounts,
       cogs,
       profit,
-      dayExpenses,
-      netAfterExpenses: profit - dayExpenses,
+      marginPct: revenue > 0 ? (profit / revenue) * 100 : 0,
+      rangeExpenses,
+      netAfterExpenses: profit - rangeExpenses,
     };
-  }, [filteredReceipts, expenses, showAllReceiptDates, selectedDate]);
+  }, [filteredReceipts, rangeFilteredExpenses]);
 
-  // 2. Daily Sales, Profit & Expenses Report
+  // 2. Daily Sales, Profit & Expenses Report (for respective dates in range)
   const dailyRows = useMemo(() => {
     const map = new Map<
       string,
@@ -200,7 +329,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
       return row;
     };
 
-    for (const sale of sales) {
+    for (const sale of rangeFilteredSales) {
       const row = ensure(toLocalDateKey(sale.createdAt));
       row.receiptCount += 1;
       row.grossSales += sale.subtotal;
@@ -210,7 +339,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
       row.receiptProfit += sale.netProfit;
     }
 
-    for (const exp of expenses) {
+    for (const exp of rangeFilteredExpenses) {
       const row = ensure(toLocalDateKey(exp.date));
       row.expenses += exp.amount;
     }
@@ -221,12 +350,35 @@ export const ReportsAndExpensesWorkspace: React.FC<
     }));
 
     return list.sort((a, b) => b.date.localeCompare(a.date));
-  }, [sales, expenses]);
+  }, [rangeFilteredSales, rangeFilteredExpenses]);
+
+  const dailyTotals = useMemo(() => {
+    const receiptCount = dailyRows.reduce((s, r) => s + r.receiptCount, 0);
+    const grossSales = dailyRows.reduce((s, r) => s + r.grossSales, 0);
+    const discounts = dailyRows.reduce((s, r) => s + r.discounts, 0);
+    const netSales = dailyRows.reduce((s, r) => s + r.netSales, 0);
+    const cogs = dailyRows.reduce((s, r) => s + r.cogs, 0);
+    const receiptProfit = dailyRows.reduce((s, r) => s + r.receiptProfit, 0);
+    const expensesSum = dailyRows.reduce((s, r) => s + r.expenses, 0);
+    const trueNetProfit = receiptProfit - expensesSum;
+    return {
+      dayCount: dailyRows.length,
+      receiptCount,
+      grossSales,
+      discounts,
+      netSales,
+      cogs,
+      receiptProfit,
+      expenses: expensesSum,
+      trueNetProfit,
+      netMarginPct: netSales > 0 ? (trueNetProfit / netSales) * 100 : 0,
+    };
+  }, [dailyRows]);
 
   const dailyChartData = useMemo(
     () =>
       [...dailyRows]
-        .slice(0, 14)
+        .slice(0, hasDateFilter ? 31 : 14)
         .reverse()
         .map((r) => ({
           label: r.date.slice(5),
@@ -235,10 +387,10 @@ export const ReportsAndExpensesWorkspace: React.FC<
           Expenses: Math.round(r.expenses * 100) / 100,
           'Net Profit': Math.round(r.trueNetProfit * 100) / 100,
         })),
-    [dailyRows],
+    [dailyRows, hasDateFilter],
   );
 
-  // 3. Month-wise Sales, Profit & Expenses Report
+  // 3. Month-wise Sales, Profit & Expenses Report (for respective dates in range)
   const monthlyRows = useMemo(() => {
     const map = new Map<
       string,
@@ -246,8 +398,9 @@ export const ReportsAndExpensesWorkspace: React.FC<
         monthKey: string;
         monthLabel: string;
         receiptCount: number;
-        netSales: number;
+        grossSales: number;
         discounts: number;
+        netSales: number;
         cogs: number;
         grossProfit: number;
         expenses: number;
@@ -262,8 +415,9 @@ export const ReportsAndExpensesWorkspace: React.FC<
           monthKey,
           monthLabel: formatMonthLabel(monthKey),
           receiptCount: 0,
-          netSales: 0,
+          grossSales: 0,
           discounts: 0,
+          netSales: 0,
           cogs: 0,
           grossProfit: 0,
           expenses: 0,
@@ -274,17 +428,18 @@ export const ReportsAndExpensesWorkspace: React.FC<
       return row;
     };
 
-    for (const sale of sales) {
+    for (const sale of rangeFilteredSales) {
       const monthKey = toLocalDateKey(sale.createdAt).slice(0, 7);
       const row = ensure(monthKey);
       row.receiptCount += 1;
-      row.netSales += sale.netPayable;
+      row.grossSales += sale.subtotal;
       row.discounts += sale.discountAmount;
+      row.netSales += sale.netPayable;
       row.cogs += sale.totalCost;
       row.grossProfit += sale.netProfit;
     }
 
-    for (const exp of expenses) {
+    for (const exp of rangeFilteredExpenses) {
       const monthKey = toLocalDateKey(exp.date).slice(0, 7);
       const row = ensure(monthKey);
       row.expenses += exp.amount;
@@ -296,7 +451,30 @@ export const ReportsAndExpensesWorkspace: React.FC<
         trueNetProfit: r.grossProfit - r.expenses,
       }))
       .sort((a, b) => b.monthKey.localeCompare(a.monthKey));
-  }, [sales, expenses]);
+  }, [rangeFilteredSales, rangeFilteredExpenses]);
+
+  const monthlyTotals = useMemo(() => {
+    const receiptCount = monthlyRows.reduce((s, r) => s + r.receiptCount, 0);
+    const grossSales = monthlyRows.reduce((s, r) => s + r.grossSales, 0);
+    const discounts = monthlyRows.reduce((s, r) => s + r.discounts, 0);
+    const netSales = monthlyRows.reduce((s, r) => s + r.netSales, 0);
+    const cogs = monthlyRows.reduce((s, r) => s + r.cogs, 0);
+    const grossProfit = monthlyRows.reduce((s, r) => s + r.grossProfit, 0);
+    const expensesSum = monthlyRows.reduce((s, r) => s + r.expenses, 0);
+    const trueNetProfit = grossProfit - expensesSum;
+    return {
+      monthCount: monthlyRows.length,
+      receiptCount,
+      grossSales,
+      discounts,
+      netSales,
+      cogs,
+      grossProfit,
+      expenses: expensesSum,
+      trueNetProfit,
+      netMarginPct: netSales > 0 ? (trueNetProfit / netSales) * 100 : 0,
+    };
+  }, [monthlyRows]);
 
   const monthlyChartData = useMemo(
     () =>
@@ -319,7 +497,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
   }, [expenses]);
 
   const filteredExpenses = useMemo(() => {
-    return expenses
+    return rangeFilteredExpenses
       .filter((exp) => {
         if (
           expenseFilterCategory !== 'All' &&
@@ -336,7 +514,12 @@ export const ReportsAndExpensesWorkspace: React.FC<
         return true;
       })
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [expenses, expenseFilterCategory, expenseFilterMonth]);
+  }, [rangeFilteredExpenses, expenseFilterCategory, expenseFilterMonth]);
+
+  const filteredExpensesTotal = useMemo(
+    () => filteredExpenses.reduce((s, e) => s + e.amount, 0),
+    [filteredExpenses],
+  );
 
   const expenseCategoryTotals = useMemo(() => {
     const map = new Map<ExpenseCategory, number>();
@@ -377,8 +560,11 @@ export const ReportsAndExpensesWorkspace: React.FC<
   };
 
   const exportReceiptsCsv = () => {
+    const scopeSlug = hasDateFilter
+      ? `${effectiveFrom || 'start'}_to_${effectiveTo || 'end'}`
+      : 'all';
     downloadCsvFile(
-      `clinix_receipt_profit_${showAllReceiptDates ? 'all' : selectedDate}.csv`,
+      `clinix_receipt_profit_${scopeSlug}.csv`,
       [
         'Invoice #',
         'Date',
@@ -393,32 +579,51 @@ export const ReportsAndExpensesWorkspace: React.FC<
         `Receipt Profit (${csvCur})`,
         'Margin %',
       ],
-      filteredReceipts.map((s) => {
-        const margin =
-          s.netPayable > 0
-            ? ((s.netProfit / s.netPayable) * 100).toFixed(1)
-            : '0.0';
-        return [
-          s.invoiceNumber,
-          toLocalDateKey(s.createdAt),
-          s.partyName,
-          s.paymentMode,
-          s.transactionReference || '',
-          s.createdByName || 'Admin',
-          s.subtotal.toFixed(digits),
-          s.discountAmount.toFixed(digits),
-          s.netPayable.toFixed(digits),
-          s.totalCost.toFixed(digits),
-          s.netProfit.toFixed(digits),
-          `${margin}%`,
-        ];
-      }),
+      [
+        ...filteredReceipts.map((s) => {
+          const margin =
+            s.netPayable > 0
+              ? ((s.netProfit / s.netPayable) * 100).toFixed(1)
+              : '0.0';
+          return [
+            s.invoiceNumber,
+            toLocalDateKey(s.createdAt),
+            s.partyName,
+            s.paymentMode,
+            s.transactionReference || '',
+            s.createdByName || 'Admin',
+            s.subtotal.toFixed(digits),
+            s.discountAmount.toFixed(digits),
+            s.netPayable.toFixed(digits),
+            s.totalCost.toFixed(digits),
+            s.netProfit.toFixed(digits),
+            `${margin}%`,
+          ];
+        }),
+        [
+          `TOTAL (${receiptScopeTotals.count} receipts)`,
+          rangeScopeLabel,
+          '',
+          '',
+          '',
+          '',
+          receiptScopeTotals.gross.toFixed(digits),
+          receiptScopeTotals.discounts.toFixed(digits),
+          receiptScopeTotals.revenue.toFixed(digits),
+          receiptScopeTotals.cogs.toFixed(digits),
+          receiptScopeTotals.profit.toFixed(digits),
+          `${receiptScopeTotals.marginPct.toFixed(1)}%`,
+        ],
+      ],
     );
   };
 
   const exportDailyCsv = () => {
+    const scopeSlug = hasDateFilter
+      ? `_${effectiveFrom || 'start'}_to_${effectiveTo || 'end'}`
+      : '';
     downloadCsvFile(
-      'clinix_daily_sales_profit_report.csv',
+      `clinix_daily_sales_profit_report${scopeSlug}.csv`,
       [
         'Date',
         'Receipts',
@@ -430,57 +635,93 @@ export const ReportsAndExpensesWorkspace: React.FC<
         `Expenses (${csvCur})`,
         `True Net Profit (${csvCur})`,
       ],
-      dailyRows.map((r) => [
-        r.date,
-        r.receiptCount,
-        r.grossSales.toFixed(digits),
-        r.discounts.toFixed(digits),
-        r.netSales.toFixed(digits),
-        r.cogs.toFixed(digits),
-        r.receiptProfit.toFixed(digits),
-        r.expenses.toFixed(digits),
-        r.trueNetProfit.toFixed(digits),
-      ]),
+      [
+        ...dailyRows.map((r) => [
+          r.date,
+          r.receiptCount,
+          r.grossSales.toFixed(digits),
+          r.discounts.toFixed(digits),
+          r.netSales.toFixed(digits),
+          r.cogs.toFixed(digits),
+          r.receiptProfit.toFixed(digits),
+          r.expenses.toFixed(digits),
+          r.trueNetProfit.toFixed(digits),
+        ]),
+        [
+          `TOTAL (${dailyTotals.dayCount} days)`,
+          dailyTotals.receiptCount,
+          dailyTotals.grossSales.toFixed(digits),
+          dailyTotals.discounts.toFixed(digits),
+          dailyTotals.netSales.toFixed(digits),
+          dailyTotals.cogs.toFixed(digits),
+          dailyTotals.receiptProfit.toFixed(digits),
+          dailyTotals.expenses.toFixed(digits),
+          dailyTotals.trueNetProfit.toFixed(digits),
+        ],
+      ],
     );
   };
 
   const exportMonthlyCsv = () => {
+    const scopeSlug = hasDateFilter
+      ? `_${effectiveFrom || 'start'}_to_${effectiveTo || 'end'}`
+      : '';
     downloadCsvFile(
-      'clinix_monthly_sales_profit_report.csv',
+      `clinix_monthly_sales_profit_report${scopeSlug}.csv`,
       [
         'Month',
         'Receipts',
-        `Net Sales (${csvCur})`,
+        `Gross Sales (${csvCur})`,
         `Discounts (${csvCur})`,
+        `Net Sales (${csvCur})`,
         `COGS (${csvCur})`,
         `Gross Receipt Profit (${csvCur})`,
         `Expenses (${csvCur})`,
         `True Net Profit (${csvCur})`,
         'Net Margin %',
       ],
-      monthlyRows.map((r) => {
-        const netMargin =
-          r.netSales > 0
-            ? ((r.trueNetProfit / r.netSales) * 100).toFixed(1)
-            : '0.0';
-        return [
-          r.monthLabel,
-          r.receiptCount,
-          r.netSales.toFixed(digits),
-          r.discounts.toFixed(digits),
-          r.cogs.toFixed(digits),
-          r.grossProfit.toFixed(digits),
-          r.expenses.toFixed(digits),
-          r.trueNetProfit.toFixed(digits),
-          `${netMargin}%`,
-        ];
-      }),
+      [
+        ...monthlyRows.map((r) => {
+          const netMargin =
+            r.netSales > 0
+              ? ((r.trueNetProfit / r.netSales) * 100).toFixed(1)
+              : '0.0';
+          return [
+            r.monthLabel,
+            r.receiptCount,
+            r.grossSales.toFixed(digits),
+            r.discounts.toFixed(digits),
+            r.netSales.toFixed(digits),
+            r.cogs.toFixed(digits),
+            r.grossProfit.toFixed(digits),
+            r.expenses.toFixed(digits),
+            r.trueNetProfit.toFixed(digits),
+            `${netMargin}%`,
+          ];
+        }),
+        [
+          `TOTAL (${monthlyTotals.monthCount} months)`,
+          monthlyTotals.receiptCount,
+          monthlyTotals.grossSales.toFixed(digits),
+          monthlyTotals.discounts.toFixed(digits),
+          monthlyTotals.netSales.toFixed(digits),
+          monthlyTotals.cogs.toFixed(digits),
+          monthlyTotals.grossProfit.toFixed(digits),
+          monthlyTotals.expenses.toFixed(digits),
+          monthlyTotals.trueNetProfit.toFixed(digits),
+          `${monthlyTotals.netMarginPct.toFixed(1)}%`,
+        ],
+      ],
     );
   };
 
   const exportExpensesCsv = () => {
     const scopeSuffix = [
-      expenseFilterMonth !== 'All' ? expenseFilterMonth : 'all_months',
+      hasDateFilter
+        ? `${effectiveFrom || 'start'}_to_${effectiveTo || 'end'}`
+        : expenseFilterMonth !== 'All'
+          ? expenseFilterMonth
+          : 'all_dates',
       expenseFilterCategory !== 'All'
         ? expenseFilterCategory.toLowerCase().replace(/[^a-z0-9]+/g, '_')
         : 'all_categories',
@@ -488,14 +729,24 @@ export const ReportsAndExpensesWorkspace: React.FC<
     downloadCsvFile(
       `clinix_expenses_${scopeSuffix}.csv`,
       ['Date', 'Title', 'Category', 'Payment Mode', `Amount (${csvCur})`, 'Notes'],
-      filteredExpenses.map((exp) => [
-        exp.date,
-        exp.title,
-        exp.category,
-        exp.paymentMode,
-        exp.amount.toFixed(digits),
-        exp.notes || '',
-      ]),
+      [
+        ...filteredExpenses.map((exp) => [
+          exp.date,
+          exp.title,
+          exp.category,
+          exp.paymentMode,
+          exp.amount.toFixed(digits),
+          exp.notes || '',
+        ]),
+        [
+          `TOTAL (${filteredExpenses.length} entries)`,
+          '',
+          '',
+          '',
+          filteredExpensesTotal.toFixed(digits),
+          '',
+        ],
+      ],
     );
   };
 
@@ -512,43 +763,150 @@ export const ReportsAndExpensesWorkspace: React.FC<
     else exportExpensesCsv();
   };
 
+  const handleDownloadPdfReport = () => {
+    const scopeFileSlug = hasDateFilter
+      ? `${effectiveFrom || 'start'}_to_${effectiveTo || 'end'}`
+      : 'all_dates';
+
+    downloadFinancialReportPdf({
+      activeTab: subTab,
+      settings,
+      dateScopeLabel: rangeScopeLabel,
+      scopeFileSlug,
+      periodTotals,
+      dailyRows,
+      dailyTotals,
+      monthlyRows,
+      monthlyTotals,
+      filteredReceipts,
+      receiptScopeTotals,
+      receiptSearchQuery: receiptSearch,
+      filteredExpenses,
+      filteredExpensesTotal,
+      expenseCategoryFilter: expenseFilterCategory,
+      expenseMonthFilter: expenseFilterMonth,
+    });
+  };
+
   return (
     <div className="flex flex-col gap-6">
-      {/* Executive Financial Summary Strip */}
+      {/* Unified From-Date to To-Date Filter Bar */}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <Calendar className="h-3.5 w-3.5 text-[#0D7A5F] dark:text-emerald-400" />
+              <span>Report Date Range:</span>
+            </span>
+            {(
+              [
+                { id: 'all', label: 'All Dates' },
+                { id: 'today', label: 'Today' },
+                { id: '7d', label: 'Last 7 Days' },
+                { id: '30d', label: 'Last 30 Days' },
+                { id: 'month', label: 'This Month' },
+                { id: 'lastMonth', label: 'Last Month' },
+              ] as { id: DateRangePreset; label: string }[]
+            ).map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyRangePreset(preset.id)}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
+                  activePreset === preset.id
+                    ? 'border-[#0D7A5F] bg-[#0D7A5F] text-white'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+              <span>From</span>
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => {
+                  setFromDate(e.target.value);
+                  setActivePreset('custom');
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+              <span>To</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => {
+                  setToDate(e.target.value);
+                  setActivePreset('custom');
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              />
+            </label>
+            {hasDateFilter && (
+              <button
+                type="button"
+                onClick={() => applyRangePreset('all')}
+                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
+          <span>
+            Showing totals for:{' '}
+            <strong className="font-mono-tabular text-slate-800 dark:text-slate-200">
+              {rangeScopeLabel}
+            </strong>
+          </span>
+          <span className="font-mono-tabular">
+            {periodTotals.receiptCount} receipts · {periodTotals.expenseCount} expense entries
+          </span>
+        </div>
+      </section>
+
+      {/* Executive Financial Summary Strip (Scoped to Active Dates) */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Total Sales
+            Total Net Sales
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-slate-900 dark:text-slate-100">
-            {formatMoney(overallTotals.totalSales, settings)}
+            {formatMoney(periodTotals.totalSales, settings)}
           </p>
           <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
-            {sales.length} receipts
+            Gross {formatMoney(periodTotals.grossSales, settings)} · Disc -{formatMoney(periodTotals.totalDiscounts, settings)}
           </p>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Cost of Goods (COGS)
+            Total Cost (COGS)
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-slate-700 dark:text-slate-300">
-            {formatMoney(overallTotals.totalCost, settings)}
+            {formatMoney(periodTotals.totalCost, settings)}
           </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            Purchase basis
+          <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
+            {periodTotals.receiptCount} bills · Purchase basis
           </p>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Receipt Profit (Gross)
+            Total Gross Profit
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-[#0D7A5F] dark:text-emerald-400">
-            {formatMoney(overallTotals.grossProfit, settings)}
+            {formatMoney(periodTotals.grossProfit, settings)}
           </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            After bill &amp; item discounts
+          <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
+            {periodTotals.grossMarginPct.toFixed(1)}% gross margin
           </p>
         </div>
 
@@ -557,10 +915,10 @@ export const ReportsAndExpensesWorkspace: React.FC<
             Operating Expenses
           </p>
           <p className="mt-1 font-mono-tabular text-xl font-bold text-amber-700 dark:text-amber-400">
-            {formatMoney(overallTotals.totalExpenses, settings)}
+            {formatMoney(periodTotals.totalExpenses, settings)}
           </p>
           <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
-            {expenses.length} recorded entries
+            {periodTotals.expenseCount} recorded entries
           </p>
         </div>
 
@@ -570,15 +928,15 @@ export const ReportsAndExpensesWorkspace: React.FC<
           </p>
           <p
             className={`mt-1 font-mono-tabular text-xl font-bold ${
-              overallTotals.trueNetProfit >= 0
+              periodTotals.trueNetProfit >= 0
                 ? 'text-[#0D7A5F] dark:text-emerald-400'
                 : 'text-red-700 dark:text-red-400'
             }`}
           >
-            {formatMoney(overallTotals.trueNetProfit, settings)}
+            {formatMoney(periodTotals.trueNetProfit, settings)}
           </p>
-          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-            Receipt Profit &minus; Expenses
+          <p className="mt-0.5 font-mono-tabular text-[11px] text-slate-500 dark:text-slate-400">
+            {periodTotals.netMarginPct.toFixed(1)}% net margin (after expenses)
           </p>
         </div>
       </div>
@@ -588,10 +946,10 @@ export const ReportsAndExpensesWorkspace: React.FC<
         <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
           {(
             [
-              { id: 'receipts', label: 'Daily Receipt Profit' },
-              { id: 'daily', label: 'Daily Sales & Profit' },
-              { id: 'monthly', label: 'Month-wise Report' },
-              { id: 'expenses', label: `Expenses (${expenses.length})` },
+              { id: 'receipts', label: 'Receipt-by-Receipt Profit' },
+              { id: 'daily', label: 'Daily Report' },
+              { id: 'monthly', label: 'Monthly Report' },
+              { id: 'expenses', label: `Expenses (${rangeFilteredExpenses.length})` },
             ] as { id: ReportSubTab; label: string }[]
           ).map((tab) => (
             <button
@@ -609,11 +967,20 @@ export const ReportsAndExpensesWorkspace: React.FC<
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <span className="hidden text-xs text-slate-500 sm:inline dark:text-slate-400">
-            Admin Financial Audit ·{' '}
+            {rangeScopeLabel} ·{' '}
             {settings?.pharmacyName || 'Clinix Community Pharmacy'}
           </span>
+          <button
+            type="button"
+            disabled={isActiveExportDisabled}
+            onClick={handleDownloadPdfReport}
+            className="flex items-center justify-center gap-2 rounded-lg bg-[#0D7A5F] px-3.5 py-2 text-xs font-semibold text-white whitespace-nowrap shadow-sm hover:bg-[#0B6650] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            <span>Download PDF Report</span>
+          </button>
           <button
             type="button"
             disabled={isActiveExportDisabled}
@@ -626,59 +993,19 @@ export const ReportsAndExpensesWorkspace: React.FC<
         </div>
       </div>
 
-      {/* TAB 1: DAILY RECEIPT-BY-RECEIPT PROFIT */}
+      {/* TAB 1: RECEIPT-BY-RECEIPT PROFIT */}
       {subTab === 'receipts' && (
         <div className="flex flex-col gap-5">
           <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative min-w-[220px] flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={receiptSearch}
-                  onChange={(e) => setReceiptSearch(e.target.value)}
-                  placeholder="Search invoice #, party, cashier..."
-                  className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-400"
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={selectedDate}
-                  disabled={showAllReceiptDates}
-                  onChange={(e) => {
-                    setSelectedDate(e.target.value);
-                    setShowAllReceiptDates(false);
-                  }}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-[#0D7A5F] focus:outline-none disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedDate(getTodayDateKey());
-                    setShowAllReceiptDates(false);
-                  }}
-                  className={`rounded-lg border px-3 py-2 text-xs font-semibold whitespace-nowrap ${
-                    !showAllReceiptDates && selectedDate === getTodayDateKey()
-                      ? 'border-[#0D7A5F] bg-[#0D7A5F] text-white'
-                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  Today Only
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowAllReceiptDates((prev) => !prev)}
-                  className={`rounded-lg border px-3 py-2 text-xs font-semibold whitespace-nowrap ${
-                    showAllReceiptDates
-                      ? 'border-slate-900 bg-slate-900 text-white dark:border-emerald-600 dark:bg-emerald-700'
-                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  All Dates
-                </button>
-              </div>
+            <div className="relative min-w-[240px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={receiptSearch}
+                onChange={(e) => setReceiptSearch(e.target.value)}
+                placeholder="Search invoice #, party, cashier within selected dates..."
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-[#0D7A5F] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-400"
+              />
             </div>
 
             <button
@@ -688,18 +1015,29 @@ export const ReportsAndExpensesWorkspace: React.FC<
               className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
             >
               <Download className="h-3.5 w-3.5" />
-              <span>Export to CSV</span>
+              <span>Export Receipts CSV</span>
             </button>
           </div>
 
           {/* Selected Scope Strip */}
-          <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-5 dark:border-slate-800 dark:bg-slate-900">
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-6 dark:border-slate-800 dark:bg-slate-900">
             <div>
               <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 Receipts
               </p>
               <p className="font-mono-tabular text-base font-bold text-slate-900 dark:text-slate-100">
                 {receiptScopeTotals.count}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                Gross / Disc
+              </p>
+              <p className="font-mono-tabular text-xs font-bold text-slate-800 dark:text-slate-200">
+                {formatMoney(receiptScopeTotals.gross, settings)}
+              </p>
+              <p className="font-mono-tabular text-[11px] text-amber-700 dark:text-amber-400">
+                -{formatMoney(receiptScopeTotals.discounts, settings)}
               </p>
             </div>
             <div>
@@ -728,7 +1066,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
             </div>
             <div>
               <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                After Day Expenses (-{formatMoney(receiptScopeTotals.dayExpenses, settings)})
+                After Expenses (-{formatMoney(receiptScopeTotals.rangeExpenses, settings)})
               </p>
               <p
                 className={`font-mono-tabular text-base font-bold ${
@@ -935,6 +1273,42 @@ export const ReportsAndExpensesWorkspace: React.FC<
                     })
                   )}
                 </tbody>
+                {filteredReceipts.length > 0 && (
+                  <tfoot className="border-t-2 border-slate-300 bg-slate-100/90 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
+                    <tr>
+                      <td className="px-4 py-3 text-slate-900 dark:text-slate-100" colSpan={2}>
+                        Total ({receiptScopeTotals.count} receipts · {rangeScopeLabel})
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-800 dark:text-slate-200">
+                        {formatMoney(receiptScopeTotals.gross, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                        -{formatMoney(receiptScopeTotals.discounts, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular font-bold text-slate-900 dark:text-slate-100">
+                        {formatMoney(receiptScopeTotals.revenue, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                        {formatMoney(receiptScopeTotals.cogs, settings)}
+                      </td>
+                      <td
+                        className={`px-3 py-3 text-right font-mono-tabular font-bold ${
+                          receiptScopeTotals.profit >= 0
+                            ? 'text-[#0D7A5F] dark:text-emerald-400'
+                            : 'text-red-700 dark:text-red-400'
+                        }`}
+                      >
+                        {formatMoney(receiptScopeTotals.profit, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                        {receiptScopeTotals.marginPct.toFixed(1)}%
+                      </td>
+                      <td className="px-4 py-3 text-right text-[11px] text-slate-500 dark:text-slate-400">
+                        Period Total
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </section>
@@ -1025,12 +1399,31 @@ export const ReportsAndExpensesWorkspace: React.FC<
           </section>
 
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50/70 px-4 py-2.5 text-xs dark:border-slate-800 dark:bg-slate-800/40">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                Daily Breakdown ({dailyTotals.dayCount} active days · {rangeScopeLabel})
+              </span>
+              <span className="font-mono-tabular text-slate-600 dark:text-slate-300">
+                Sales {formatMoney(dailyTotals.netSales, settings)} · Cost {formatMoney(dailyTotals.cogs, settings)} · Net Profit{' '}
+                <strong
+                  className={
+                    dailyTotals.trueNetProfit >= 0
+                      ? 'text-[#0D7A5F] dark:text-emerald-400'
+                      : 'text-red-700 dark:text-red-400'
+                  }
+                >
+                  {formatMoney(dailyTotals.trueNetProfit, settings)}
+                </strong>
+              </span>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
                   <tr>
                     <th className="px-4 py-3">Date</th>
                     <th className="px-3 py-3 text-right">Receipts</th>
+                    <th className="px-3 py-3 text-right">Gross Sales</th>
+                    <th className="px-3 py-3 text-right">Discounts</th>
                     <th className="px-3 py-3 text-right">Net Sales</th>
                     <th className="px-3 py-3 text-right">COGS</th>
                     <th className="px-3 py-3 text-right">Receipt Profit</th>
@@ -1040,54 +1433,116 @@ export const ReportsAndExpensesWorkspace: React.FC<
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {dailyRows.map((row) => (
-                    <tr
-                      key={row.date}
-                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
-                    >
-                      <td className="px-4 py-3 font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                        {formatDateBySettings(row.date, settings)}
+                  {dailyRows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={10}
+                        className="px-4 py-10 text-center text-xs text-slate-500 dark:text-slate-400"
+                      >
+                        No daily sales or expenses found for {rangeScopeLabel}.
                       </td>
-                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
-                        {row.receiptCount}
+                    </tr>
+                  ) : (
+                    dailyRows.map((row) => (
+                      <tr
+                        key={row.date}
+                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
+                      >
+                        <td className="px-4 py-3 font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
+                          {formatDateBySettings(row.date, settings)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                          {row.receiptCount}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
+                          {formatMoney(row.grossSales, settings)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                          -{formatMoney(row.discounts, settings)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
+                          {formatMoney(row.netSales, settings)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
+                          {formatMoney(row.cogs, settings)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
+                          {formatMoney(row.receiptProfit, settings)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                          {formatMoney(row.expenses, settings)}
+                        </td>
+                        <td
+                          className={`px-3 py-3 text-right font-mono-tabular font-bold ${
+                            row.trueNetProfit >= 0
+                              ? 'text-[#0D7A5F] dark:text-emerald-400'
+                              : 'text-red-700 dark:text-red-400'
+                          }`}
+                        >
+                          {formatMoney(row.trueNetProfit, settings)}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFromDate(row.date);
+                              setToDate(row.date);
+                              setActivePreset(
+                                row.date === getTodayDateKey() ? 'today' : 'custom',
+                              );
+                              setSubTab('receipts');
+                            }}
+                            className="text-xs font-semibold text-[#0D7A5F] hover:underline dark:text-emerald-400"
+                          >
+                            View Receipts
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {dailyRows.length > 0 && (
+                  <tfoot className="border-t-2 border-slate-300 bg-slate-100/90 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
+                    <tr>
+                      <td className="px-4 py-3 text-slate-900 dark:text-slate-100">
+                        Total ({dailyTotals.dayCount} days)
                       </td>
-                      <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                        {formatMoney(row.netSales, settings)}
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-900 dark:text-slate-100">
+                        {dailyTotals.receiptCount}
                       </td>
-                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                        {formatMoney(row.cogs, settings)}
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                        {formatMoney(row.receiptProfit, settings)}
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-800 dark:text-slate-200">
+                        {formatMoney(dailyTotals.grossSales, settings)}
                       </td>
                       <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
-                        {formatMoney(row.expenses, settings)}
+                        -{formatMoney(dailyTotals.discounts, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular font-bold text-slate-900 dark:text-slate-100">
+                        {formatMoney(dailyTotals.netSales, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                        {formatMoney(dailyTotals.cogs, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular font-bold text-[#0D7A5F] dark:text-emerald-400">
+                        {formatMoney(dailyTotals.receiptProfit, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                        {formatMoney(dailyTotals.expenses, settings)}
                       </td>
                       <td
                         className={`px-3 py-3 text-right font-mono-tabular font-bold ${
-                          row.trueNetProfit >= 0
+                          dailyTotals.trueNetProfit >= 0
                             ? 'text-[#0D7A5F] dark:text-emerald-400'
                             : 'text-red-700 dark:text-red-400'
                         }`}
                       >
-                        {formatMoney(row.trueNetProfit, settings)}
+                        {formatMoney(dailyTotals.trueNetProfit, settings)}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedDate(row.date);
-                            setShowAllReceiptDates(false);
-                            setSubTab('receipts');
-                          }}
-                          className="text-xs font-semibold text-[#0D7A5F] hover:underline dark:text-emerald-400"
-                        >
-                          View Receipts
-                        </button>
+                      <td className="px-4 py-3 text-right font-mono-tabular text-[11px] text-slate-600 dark:text-slate-300">
+                        Margin {dailyTotals.netMarginPct.toFixed(1)}%
                       </td>
                     </tr>
-                  ))}
-                </tbody>
+                  </tfoot>
+                )}
               </table>
             </div>
           </section>
@@ -1105,7 +1560,7 @@ export const ReportsAndExpensesWorkspace: React.FC<
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   Monthly revenue vs cost of goods, receipt profit, and operating
-                  expenses
+                  expenses ({rangeScopeLabel})
                 </p>
               </div>
               <button
@@ -1183,13 +1638,32 @@ export const ReportsAndExpensesWorkspace: React.FC<
           </section>
 
           <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50/70 px-4 py-2.5 text-xs dark:border-slate-800 dark:bg-slate-800/40">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                Monthly Breakdown ({monthlyTotals.monthCount} months · {rangeScopeLabel})
+              </span>
+              <span className="font-mono-tabular text-slate-600 dark:text-slate-300">
+                Sales {formatMoney(monthlyTotals.netSales, settings)} · Cost {formatMoney(monthlyTotals.cogs, settings)} · Net Profit{' '}
+                <strong
+                  className={
+                    monthlyTotals.trueNetProfit >= 0
+                      ? 'text-[#0D7A5F] dark:text-emerald-400'
+                      : 'text-red-700 dark:text-red-400'
+                  }
+                >
+                  {formatMoney(monthlyTotals.trueNetProfit, settings)}
+                </strong>
+              </span>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
                   <tr>
                     <th className="px-4 py-3">Month</th>
                     <th className="px-3 py-3 text-right">Receipts</th>
-                    <th className="px-3 py-3 text-right">Sales Revenue</th>
+                    <th className="px-3 py-3 text-right">Gross Sales</th>
+                    <th className="px-3 py-3 text-right">Discounts</th>
+                    <th className="px-3 py-3 text-right">Net Sales</th>
                     <th className="px-3 py-3 text-right">COGS</th>
                     <th className="px-3 py-3 text-right">Gross Profit</th>
                     <th className="px-3 py-3 text-right">Expenses</th>
@@ -1198,50 +1672,119 @@ export const ReportsAndExpensesWorkspace: React.FC<
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {monthlyRows.map((row) => {
-                    const netMargin =
-                      row.netSales > 0
-                        ? (row.trueNetProfit / row.netSales) * 100
-                        : 0;
-                    return (
-                      <tr
-                        key={row.monthKey}
-                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
+                  {monthlyRows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={10}
+                        className="px-4 py-10 text-center text-xs text-slate-500 dark:text-slate-400"
                       >
-                        <td className="px-4 py-3 font-semibold text-slate-900 dark:text-slate-100">
-                          {row.monthLabel}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
-                          {row.receiptCount}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
-                          {formatMoney(row.netSales, settings)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                          {formatMoney(row.cogs, settings)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
-                          {formatMoney(row.grossProfit, settings)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
-                          {formatMoney(row.expenses, settings)}
-                        </td>
-                        <td
-                          className={`px-3 py-3 text-right font-mono-tabular font-bold ${
-                            row.trueNetProfit >= 0
-                              ? 'text-[#0D7A5F] dark:text-emerald-400'
-                              : 'text-red-700 dark:text-red-400'
-                          }`}
+                        No monthly sales or expenses found for {rangeScopeLabel}.
+                      </td>
+                    </tr>
+                  ) : (
+                    monthlyRows.map((row) => {
+                      const netMargin =
+                        row.netSales > 0
+                          ? (row.trueNetProfit / row.netSales) * 100
+                          : 0;
+                      return (
+                        <tr
+                          key={row.monthKey}
+                          onClick={() => {
+                            const [yr, mo] = row.monthKey.split('-').map(Number);
+                            if (yr && mo) {
+                              const bounds = getMonthBounds(yr, mo - 1);
+                              setFromDate(bounds.start);
+                              setToDate(bounds.end);
+                              setActivePreset('custom');
+                              setSubTab('daily');
+                            }
+                          }}
+                          className="cursor-pointer hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
                         >
-                          {formatMoney(row.trueNetProfit, settings)}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
-                          {netMargin.toFixed(1)}%
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          <td className="px-4 py-3 font-semibold text-slate-900 dark:text-slate-100">
+                            {row.monthLabel}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                            {row.receiptCount}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
+                            {formatMoney(row.grossSales, settings)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                            -{formatMoney(row.discounts, settings)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-slate-900 dark:text-slate-100">
+                            {formatMoney(row.netSales, settings)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
+                            {formatMoney(row.cogs, settings)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono-tabular font-semibold text-[#0D7A5F] dark:text-emerald-400">
+                            {formatMoney(row.grossProfit, settings)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                            {formatMoney(row.expenses, settings)}
+                          </td>
+                          <td
+                            className={`px-3 py-3 text-right font-mono-tabular font-bold ${
+                              row.trueNetProfit >= 0
+                                ? 'text-[#0D7A5F] dark:text-emerald-400'
+                                : 'text-red-700 dark:text-red-400'
+                            }`}
+                          >
+                            {formatMoney(row.trueNetProfit, settings)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono-tabular text-slate-600 dark:text-slate-400">
+                            {netMargin.toFixed(1)}%
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
+                {monthlyRows.length > 0 && (
+                  <tfoot className="border-t-2 border-slate-300 bg-slate-100/90 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
+                    <tr>
+                      <td className="px-4 py-3 text-slate-900 dark:text-slate-100">
+                        Total ({monthlyTotals.monthCount} months)
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-900 dark:text-slate-100">
+                        {monthlyTotals.receiptCount}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-800 dark:text-slate-200">
+                        {formatMoney(monthlyTotals.grossSales, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                        -{formatMoney(monthlyTotals.discounts, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular font-bold text-slate-900 dark:text-slate-100">
+                        {formatMoney(monthlyTotals.netSales, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                        {formatMoney(monthlyTotals.cogs, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular font-bold text-[#0D7A5F] dark:text-emerald-400">
+                        {formatMoney(monthlyTotals.grossProfit, settings)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono-tabular text-amber-700 dark:text-amber-400">
+                        {formatMoney(monthlyTotals.expenses, settings)}
+                      </td>
+                      <td
+                        className={`px-3 py-3 text-right font-mono-tabular font-bold ${
+                          monthlyTotals.trueNetProfit >= 0
+                            ? 'text-[#0D7A5F] dark:text-emerald-400'
+                            : 'text-red-700 dark:text-red-400'
+                        }`}
+                      >
+                        {formatMoney(monthlyTotals.trueNetProfit, settings)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono-tabular text-slate-700 dark:text-slate-300">
+                        {monthlyTotals.netMarginPct.toFixed(1)}%
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </section>
@@ -1516,6 +2059,24 @@ export const ReportsAndExpensesWorkspace: React.FC<
                       ))
                     )}
                   </tbody>
+                  {filteredExpenses.length > 0 && (
+                    <tfoot className="border-t-2 border-slate-300 bg-slate-100/90 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
+                      <tr>
+                        <td
+                          className="px-4 py-3 text-slate-900 dark:text-slate-100"
+                          colSpan={4}
+                        >
+                          Total ({filteredExpenses.length} expense entries · {rangeScopeLabel})
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono-tabular font-bold text-amber-700 dark:text-amber-400">
+                          {formatMoney(filteredExpensesTotal, settings)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-[11px] text-slate-500 dark:text-slate-400">
+                          Period Total
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </section>

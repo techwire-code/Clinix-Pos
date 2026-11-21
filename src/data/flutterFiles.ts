@@ -8,6 +8,7 @@ import khataStatementRaw from '../../flutter_app/lib/screens/khata_statement_scr
 import supplierLedgerRaw from '../../flutter_app/lib/screens/supplier_ledger_screen.dart?raw';
 import editCreditReceiptRaw from '../../flutter_app/lib/screens/edit_credit_receipt_dialog.dart?raw';
 import printerSettingsRaw from '../../flutter_app/lib/screens/printer_settings_screen.dart?raw';
+import reportsScreenRaw from '../../flutter_app/lib/screens/reports_screen.dart?raw';
 import settingsScreenRaw from '../../flutter_app/lib/screens/settings_screen.dart?raw';
 import printerServiceRaw from '../../flutter_app/lib/services/printer_service.dart?raw';
 import pdfInvoiceServiceRaw from '../../flutter_app/lib/services/pdf_invoice_service.dart?raw';
@@ -85,6 +86,15 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
       'Admin/Manager credit bill correction screen with mandatory audit reason, live stock delta preview, and Khata reconciliation.',
     language: 'dart',
     content: editCreditReceiptRaw,
+  },
+  {
+    id: 'reports_screen',
+    path: 'lib/screens/reports_screen.dart',
+    title: 'Daily, Monthly & Date-Range Financial Reports',
+    summary:
+      'Daily, Monthly, Receipt-by-Receipt Profit, and Expenses reports with From/To date filters, dynamic KPIs, and Grand Total rows.',
+    language: 'dart',
+    content: reportsScreenRaw,
   },
   {
     id: 'settings_screen',

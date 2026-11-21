@@ -277,7 +277,7 @@ export const SEED_PARTIES: Party[] = [
 export const SEED_SALES: SaleRecord[] = [
   {
     id: 7,
-    invoiceNumber: 'CLX-2026-0007',
+    invoiceNumber: 'CLX202611181',
     partyId: 2,
     partyName: 'Haji Muhammad Sharif (Ferozepur Rd)',
     subtotal: 800,
@@ -316,7 +316,7 @@ export const SEED_SALES: SaleRecord[] = [
   },
   {
     id: 6,
-    invoiceNumber: 'CLX-2026-0006',
+    invoiceNumber: 'CLX202611171',
     partyId: 3,
     partyName: 'Dr. Tariq Mahmood Clinic Account',
     subtotal: 2450,
@@ -355,7 +355,7 @@ export const SEED_SALES: SaleRecord[] = [
   },
   {
     id: 5,
-    invoiceNumber: 'CLX-2026-0005',
+    invoiceNumber: 'CLX202611161',
     partyId: 1,
     partyName: 'Walk-in Customer',
     subtotal: 1380,
@@ -394,7 +394,7 @@ export const SEED_SALES: SaleRecord[] = [
   },
   {
     id: 4,
-    invoiceNumber: 'CLX-2026-0004',
+    invoiceNumber: 'CLX202611151',
     partyId: 1,
     partyName: 'Walk-in Customer',
     subtotal: 1960,
@@ -421,7 +421,7 @@ export const SEED_SALES: SaleRecord[] = [
   },
   {
     id: 3,
-    invoiceNumber: 'CLX-2026-0003',
+    invoiceNumber: 'CLX202611141',
     partyId: 2,
     partyName: 'Haji Muhammad Sharif (Ferozepur Rd)',
     subtotal: 1120,
@@ -460,7 +460,7 @@ export const SEED_SALES: SaleRecord[] = [
   },
   {
     id: 2,
-    invoiceNumber: 'CLX-2026-0002',
+    invoiceNumber: 'CLX202611131',
     partyId: 1,
     partyName: 'Walk-in Customer',
     subtotal: 1580,
@@ -487,7 +487,7 @@ export const SEED_SALES: SaleRecord[] = [
   },
   {
     id: 1,
-    invoiceNumber: 'CLX-2026-0001',
+    invoiceNumber: 'CLX202611121',
     partyId: 1,
     partyName: 'Walk-in Customer',
     subtotal: 980,

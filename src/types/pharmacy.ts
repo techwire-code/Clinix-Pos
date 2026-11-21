@@ -45,6 +45,7 @@ export interface CurrencyPreset {
 
 export interface PharmacySettings {
   pharmacyName: string;
+  shopShortCode: string;
   address: string;
   phone: string;
   licenseNumber: string;

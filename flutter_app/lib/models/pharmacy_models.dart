@@ -789,6 +789,7 @@ class PurchaseItemRecord {
 
 class PharmacySettings {
   final String pharmacyName;
+  final String shopShortCode;
   final String address;
   final String phone;
   final String licenseNumber;
@@ -818,6 +819,7 @@ class PharmacySettings {
 
   const PharmacySettings({
     this.pharmacyName = 'Clinix Community Pharmacy',
+    this.shopShortCode = 'CLX',
     this.address = '17 KM Ferozepur Road, Lahore',
     this.phone = '+92 42 35950011',
     this.licenseNumber = 'DL-LHR-04892',
@@ -854,8 +856,17 @@ class PharmacySettings {
 
   factory PharmacySettings.defaults() => const PharmacySettings();
 
+  static String normalizeShortCode(String? raw) {
+    final cleaned = (raw ?? '')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
+        .toUpperCase();
+    if (cleaned.isEmpty) return 'CLX';
+    return cleaned.length > 8 ? cleaned.substring(0, 8) : cleaned;
+  }
+
   PharmacySettings copyWith({
     String? pharmacyName,
+    String? shopShortCode,
     String? address,
     String? phone,
     String? licenseNumber,
@@ -882,6 +893,7 @@ class PharmacySettings {
   }) {
     return PharmacySettings(
       pharmacyName: pharmacyName ?? this.pharmacyName,
+      shopShortCode: shopShortCode ?? this.shopShortCode,
       address: address ?? this.address,
       phone: phone ?? this.phone,
       licenseNumber: licenseNumber ?? this.licenseNumber,
@@ -931,6 +943,7 @@ class PharmacySettings {
     return {
       'id': 1,
       'pharmacy_name': pharmacyName,
+      'shop_short_code': normalizeShortCode(shopShortCode),
       // Keep both legacy and unified columns synchronized for seamless migrations
       'branch_address': address,
       'address': address,
@@ -966,6 +979,7 @@ class PharmacySettings {
 
   Map<String, dynamic> toJson() => {
         'pharmacyName': pharmacyName,
+        'shopShortCode': normalizeShortCode(shopShortCode),
         'address': address,
         'phone': phone,
         'licenseNumber': licenseNumber,
@@ -1002,6 +1016,8 @@ class PharmacySettings {
 
   factory PharmacySettings.fromMap(Map<String, dynamic> map) {
     final nameRaw = (map['pharmacy_name'] ?? map['pharmacyName']) as String?;
+    final shortRaw =
+        (map['shop_short_code'] ?? map['shopShortCode']) as String?;
     final addrRaw =
         (map['address'] ?? map['branch_address'] ?? map['branchAddress'])
             as String?;
@@ -1046,6 +1062,7 @@ class PharmacySettings {
       pharmacyName: (nameRaw != null && nameRaw.trim().isNotEmpty)
           ? nameRaw.trim()
           : 'Clinix Community Pharmacy',
+      shopShortCode: normalizeShortCode(shortRaw),
       address: (addrRaw != null && addrRaw.trim().isNotEmpty)
           ? addrRaw.trim()
           : '17 KM Ferozepur Road, Lahore',
@@ -1438,6 +1455,155 @@ class SupplierLedgerStatement {
     required this.currentBalanceDue,
   });
 }
+
+class ExpenseRecord {
+  final int? id;
+  final String title;
+  final String category;
+  final double amount;
+  final String date; // yyyy-MM-dd
+  final String paymentMode;
+  final String notes;
+  final String createdAt;
+
+  const ExpenseRecord({
+    this.id,
+    required this.title,
+    required this.category,
+    required this.amount,
+    required this.date,
+    this.paymentMode = 'Cash',
+    this.notes = '',
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'title': title,
+        'category': category,
+        'amount': amount,
+        'date': date,
+        'payment_mode': paymentMode,
+        'notes': notes,
+        'created_at': createdAt,
+      };
+
+  factory ExpenseRecord.fromMap(Map<String, dynamic> map) => ExpenseRecord(
+        id: (map['id'] as num?)?.toInt(),
+        title: (map['title'] as String? ?? '').trim(),
+        category: (map['category'] as String? ?? 'Delivery & Misc').trim(),
+        amount: (map['amount'] as num?)?.toDouble() ?? 0.0,
+        date: (map['date'] as String? ?? '').trim(),
+        paymentMode: (map['payment_mode'] ?? map['paymentMode']) as String? ?? 'Cash',
+        notes: (map['notes'] as String? ?? '').trim(),
+        createdAt:
+            (map['created_at'] ?? map['createdAt']) as String? ??
+                DateTime.now().toIso8601String(),
+      );
+}
+
+class ReportPeriodTotals {
+  final int receiptCount;
+  final int expenseCount;
+  final double grossSales;
+  final double discounts;
+  final double netSales;
+  final double totalCost;
+  final double grossProfit;
+  final double totalExpenses;
+  final double trueNetProfit;
+  final double grossMarginPct;
+  final double netMarginPct;
+
+  const ReportPeriodTotals({
+    required this.receiptCount,
+    required this.expenseCount,
+    required this.grossSales,
+    required this.discounts,
+    required this.netSales,
+    required this.totalCost,
+    required this.grossProfit,
+    required this.totalExpenses,
+    required this.trueNetProfit,
+    required this.grossMarginPct,
+    required this.netMarginPct,
+  });
+}
+
+class DailyReportRow {
+  final String dateKey; // yyyy-MM-dd
+  final int receiptCount;
+  final int expenseCount;
+  final double grossSales;
+  final double discounts;
+  final double netSales;
+  final double totalCost;
+  final double grossProfit;
+  final double expenses;
+  final double trueNetProfit;
+  final double netMarginPct;
+
+  const DailyReportRow({
+    required this.dateKey,
+    required this.receiptCount,
+    required this.expenseCount,
+    required this.grossSales,
+    required this.discounts,
+    required this.netSales,
+    required this.totalCost,
+    required this.grossProfit,
+    required this.expenses,
+    required this.trueNetProfit,
+    required this.netMarginPct,
+  });
+}
+
+class MonthlyReportRow {
+  final String monthKey; // yyyy-MM
+  final String label;
+  final int receiptCount;
+  final int expenseCount;
+  final double grossSales;
+  final double discounts;
+  final double netSales;
+  final double totalCost;
+  final double grossProfit;
+  final double expenses;
+  final double trueNetProfit;
+  final double netMarginPct;
+
+  const MonthlyReportRow({
+    required this.monthKey,
+    required this.label,
+    required this.receiptCount,
+    required this.expenseCount,
+    required this.grossSales,
+    required this.discounts,
+    required this.netSales,
+    required this.totalCost,
+    required this.grossProfit,
+    required this.expenses,
+    required this.trueNetProfit,
+    required this.netMarginPct,
+  });
+}
+
+class ReportSummaryBundle {
+  final ReportPeriodTotals totals;
+  final List<DailyReportRow> dailyRows;
+  final List<MonthlyReportRow> monthlyRows;
+  final List<SaleRecord> receipts;
+  final List<ExpenseRecord> expenses;
+
+  const ReportSummaryBundle({
+    required this.totals,
+    required this.dailyRows,
+    required this.monthlyRows,
+    required this.receipts,
+    required this.expenses,
+  });
+}
+
 
 
 
