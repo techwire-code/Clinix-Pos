@@ -52,6 +52,8 @@ jobs:
               }
             };
 
+            (window as any).__saveAndShare = saveAndShare;
+
             // CSV / JSON backups: anchor clicks with a download attribute
             const origClick = HTMLAnchorElement.prototype.click;
             HTMLAnchorElement.prototype.click = function () {
@@ -61,12 +63,6 @@ jobs:
                 return;
               }
               origClick.call(this);
-            };
-
-            // All jsPDF doc.save(...) calls
-            (jsPDF as any).prototype.save = function (filename?: string) {
-              void saveAndShare(filename || 'document.pdf', this.output('blob'));
-              return this;
             };
 
             // Invoice share (PDF file + summary text)
@@ -84,8 +80,18 @@ jobs:
               alert('Direct printing is not available in the app yet. Use the PDF button, then print or share the PDF from the share menu.');
             };
           }
+
+          // Every PDF save goes through here (doc.save is replaced at build time)
+          (window as any).__savePdf = (doc: jsPDF, filename: string) => {
+            if (Capacitor.isNativePlatform()) {
+              (window as any).__saveAndShare(filename, doc.output('blob'));
+            } else {
+              doc.save(filename);
+            }
+          };
           EOF
           sed -i '1i import "./nativeShim";' src/main.tsx
+          sed -i 's/doc\.save(/(window as any).__savePdf(doc, /' src/services/a5PdfGenerator.ts src/components/PartiesWorkspace.tsx
       - run: npx cap init "Clinix POS" com.clinix.pos --web-dir=dist
       - run: npm run build
       - run: npx cap add android
