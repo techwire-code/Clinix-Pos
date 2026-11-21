@@ -10,8 +10,82 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
       - run: npm install --legacy-peer-deps
-      - run: npm i --legacy-peer-deps react-is @capacitor/core @capacitor/android
+      - run: npm i --legacy-peer-deps react-is @capacitor/core @capacitor/android @capacitor/filesystem @capacitor/share
       - run: npm i -D --legacy-peer-deps @capacitor/cli
+      - name: Add native file/share support
+        run: |
+          cat > src/nativeShim.ts <<'EOF'
+          import { Capacitor } from '@capacitor/core';
+          import { Filesystem, Directory } from '@capacitor/filesystem';
+          import { Share } from '@capacitor/share';
+          import { jsPDF } from 'jspdf';
+
+          if (Capacitor.isNativePlatform()) {
+            const blobMap = new Map<string, Blob>();
+            const origCreate = URL.createObjectURL.bind(URL);
+            URL.createObjectURL = (obj: Blob | MediaSource) => {
+              const url = origCreate(obj);
+              if (obj instanceof Blob) blobMap.set(url, obj);
+              return url;
+            };
+
+            const toBase64 = (blob: Blob) =>
+              new Promise<string>((resolve, reject) => {
+                const r = new FileReader();
+                r.onload = () => resolve(String(r.result).split(',')[1] || '');
+                r.onerror = () => reject(r.error);
+                r.readAsDataURL(blob);
+              });
+
+            const saveAndShare = async (name: string, blob: Blob, title?: string, text?: string) => {
+              try {
+                const safe = (name || 'file').replace(/[^\w.\- ]+/g, '_');
+                const written = await Filesystem.writeFile({
+                  path: safe,
+                  data: await toBase64(blob),
+                  directory: Directory.Cache,
+                });
+                await Share.share({ title: title || safe, text, url: written.uri, dialogTitle: safe });
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                if (!/cancel/i.test(msg)) alert('Could not save file: ' + msg);
+              }
+            };
+
+            // CSV / JSON backups: anchor clicks with a download attribute
+            const origClick = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function () {
+              const blob = this.hasAttribute('download') ? blobMap.get(this.href) : undefined;
+              if (blob) {
+                void saveAndShare(this.getAttribute('download') || 'file', blob);
+                return;
+              }
+              origClick.call(this);
+            };
+
+            // All jsPDF doc.save(...) calls
+            (jsPDF as any).prototype.save = function (filename?: string) {
+              void saveAndShare(filename || 'document.pdf', this.output('blob'));
+              return this;
+            };
+
+            // Invoice share (PDF file + summary text)
+            (navigator as any).canShare = () => true;
+            (navigator as any).share = async (data: { title?: string; text?: string; files?: File[] }) => {
+              if (data.files && data.files.length) {
+                await saveAndShare(data.files[0].name, data.files[0], data.title, data.text);
+              } else {
+                await Share.share({ title: data.title, text: data.text });
+              }
+            };
+
+            // WebView cannot print directly
+            window.print = () => {
+              alert('Direct printing is not available in the app yet. Use the PDF button, then print or share the PDF from the share menu.');
+            };
+          }
+          EOF
+          sed -i '1i import "./nativeShim";' src/main.tsx
       - run: npx cap init "Clinix POS" com.clinix.pos --web-dir=dist
       - run: npm run build
       - run: npx cap add android
