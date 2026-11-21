@@ -43,15 +43,22 @@
     visibility: hidden;
   }
   #thermal-print-area,
-  #thermal-print-area * {
+  #thermal-print-area *,
+  #khata-print-area,
+  #khata-print-area * {
     visibility: visible;
   }
-  #thermal-print-area {
+  #thermal-print-area,
+  #khata-print-area {
+    display: block !important;
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     background: #FFFFFF !important;
     color: #0F172A !important;
+  }
+  .no-print {
+    display: none !important;
   }
 }

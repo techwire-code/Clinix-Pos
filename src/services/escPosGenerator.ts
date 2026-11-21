@@ -171,6 +171,14 @@ export function generateEscPosReceipt(
     const bal = sale.changeReturned ?? sale.cashReceived - sale.netPayable;
     pushTextLine(twoCol('Balance / Change:', fmt(bal), cols));
   }
+  if (sale.editedAt && sale.editReason) {
+    pushTextLine(
+      truncate(
+        `* REVISED (${sale.editedByName || 'Mgr'}): ${sale.editReason}`,
+        cols,
+      ),
+    );
+  }
   pushTextLine('='.repeat(cols));
 
   bytes.push(0x1b, 0x61, 0x01);

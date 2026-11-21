@@ -3,6 +3,9 @@ import mainDartRaw from '../../flutter_app/lib/main.dart?raw';
 import modelsRaw from '../../flutter_app/lib/models/pharmacy_models.dart?raw';
 import dbHelperRaw from '../../flutter_app/lib/database/db_helper.dart?raw';
 import posScreenRaw from '../../flutter_app/lib/screens/pos_screen.dart?raw';
+import partiesScreenRaw from '../../flutter_app/lib/screens/parties_screen.dart?raw';
+import khataStatementRaw from '../../flutter_app/lib/screens/khata_statement_screen.dart?raw';
+import editCreditReceiptRaw from '../../flutter_app/lib/screens/edit_credit_receipt_dialog.dart?raw';
 import printerSettingsRaw from '../../flutter_app/lib/screens/printer_settings_screen.dart?raw';
 import settingsScreenRaw from '../../flutter_app/lib/screens/settings_screen.dart?raw';
 import printerServiceRaw from '../../flutter_app/lib/services/printer_service.dart?raw';
@@ -45,6 +48,33 @@ export const FLUTTER_SOURCE_FILES: FlutterSourceFile[] = [
       'Responsive catalog grid, barcode scanner field, real-time cart, item & bill discounts, accurate net profit tracking, and payment selector.',
     language: 'dart',
     content: posScreenRaw,
+  },
+  {
+    id: 'parties_screen',
+    path: 'lib/screens/parties_screen.dart',
+    title: 'Parties & Khata Ledger',
+    summary:
+      'Customer & supplier ledger management with date-wise Khata drilldown and collection settlement.',
+    language: 'dart',
+    content: partiesScreenRaw,
+  },
+  {
+    id: 'khata_statement_screen',
+    path: 'lib/screens/khata_statement_screen.dart',
+    title: 'Customer Khata Statement',
+    summary:
+      'Date-wise Khata timeline with running balances, itemized bills, WhatsApp/PDF export, and audited Edit Receipt workflow.',
+    language: 'dart',
+    content: khataStatementRaw,
+  },
+  {
+    id: 'edit_credit_receipt_dialog',
+    path: 'lib/screens/edit_credit_receipt_dialog.dart',
+    title: 'Audited Credit Receipt Editor',
+    summary:
+      'Admin/Manager credit bill correction screen with mandatory audit reason, live stock delta preview, and Khata reconciliation.',
+    language: 'dart',
+    content: editCreditReceiptRaw,
   },
   {
     id: 'settings_screen',

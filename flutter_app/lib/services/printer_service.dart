@@ -305,6 +305,16 @@ class PrinterService {
 
     // Footer
     buffer.addAll([0x1B, 0x61, 0x01]); // Center align
+    if (sale.editedAt != null &&
+        sale.editReason != null &&
+        sale.editReason!.trim().isNotEmpty) {
+      final revDate =
+          CurrencyFormatter.formatDate(sale.editedAt!, cfg);
+      final revLine = '* REVISED ($revDate): ${sale.editReason!.trim()}';
+      for (final line in _wrapText(revLine, cols)) {
+        buffer.addAll(_line(line));
+      }
+    }
     if (cfg.receiptFooter.trim().isNotEmpty) {
       for (final line in _wrapText(cfg.receiptFooter.trim(), cols)) {
         buffer.addAll(_line(line));

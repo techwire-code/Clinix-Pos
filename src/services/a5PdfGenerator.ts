@@ -200,6 +200,18 @@ export function buildA5InvoicePdf(
     });
   }
 
+  if (sale.editedAt && sale.editReason) {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(6.8);
+    doc.setTextColor(180, 83, 9);
+    doc.text(
+      `Edited ${formatDateBySettings(sale.editedAt, settings, { includeTime: true })} by ${sale.editedByName || sale.editedBy || 'Manager'} (${sale.editReason})`,
+      left,
+      190,
+      { maxWidth: right - left },
+    );
+  }
+
   // Footer
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
@@ -238,13 +250,16 @@ export async function shareInvoiceSummary(
   const summaryText = [
     `${pharmacyName.toUpperCase()} (${address})`,
     ...(websiteLine ? [websiteLine] : []),
-    `Invoice: ${sale.invoiceNumber}`,
+    `Invoice: ${sale.invoiceNumber}${sale.editedAt ? ' (REVISED)' : ''}`,
     `Date: ${formatDateBySettings(sale.createdAt, settings, { includeTime: true })}`,
     `Party: ${sale.partyName}`,
     `Payment Mode: ${sale.paymentMode}${sale.transactionReference ? ` (Ref: ${sale.transactionReference})` : ''}`,
     `Subtotal: ${formatMoney(sale.subtotal, settings)}`,
     `Discount: -${formatMoney(sale.discountAmount, settings)}`,
     `Net Payable: ${formatMoney(sale.netPayable, settings)}`,
+    ...(sale.editedAt && sale.editReason
+      ? [`Audit Note: Edited by ${sale.editedByName || 'Manager'} (${sale.editReason})`]
+      : []),
   ].join('\n');
 
   const doc = buildA5InvoicePdf(sale, settings);

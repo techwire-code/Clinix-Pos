@@ -124,6 +124,15 @@ class PdfInvoiceService {
                             color: primaryColor,
                           ),
                         ),
+                        if (sale.editedAt != null)
+                          pw.Text(
+                            'REVISED RECEIPT',
+                            style: pw.TextStyle(
+                              fontSize: 7,
+                              fontWeight: pw.FontWeight.bold,
+                              color: const PdfColor.fromInt(0xFFB45309),
+                            ),
+                          ),
                       ],
                     ),
                   ],
@@ -306,6 +315,20 @@ class PdfInvoiceService {
                 ),
                 child: pw.Column(
                   children: [
+                    if (sale.editedAt != null &&
+                        sale.editReason != null &&
+                        sale.editReason!.trim().isNotEmpty) ...[
+                      pw.Text(
+                        'Revised on ${CurrencyFormatter.formatDate(sale.editedAt!, cfg, includeTime: true)} by ${sale.editedByName ?? sale.editedBy ?? 'Staff'} — Reason: ${sale.editReason!.trim()}',
+                        textAlign: pw.TextAlign.center,
+                        style: pw.TextStyle(
+                          fontSize: 6.5,
+                          fontWeight: pw.FontWeight.bold,
+                          color: const PdfColor.fromInt(0xFFB45309),
+                        ),
+                      ),
+                      pw.SizedBox(height: 3),
+                    ],
                     if (cfg.receiptFooter.trim().isNotEmpty)
                       pw.Text(
                         cfg.receiptFooter.trim(),
@@ -408,11 +431,435 @@ class PdfInvoiceService {
     final file = File('${dir.path}/${sale.invoiceNumber}_Invoice.pdf');
     await file.writeAsBytes(bytes, flush: true);
 
+    final revisedSuffix = (sale.editedAt != null &&
+            sale.editReason != null &&
+            sale.editReason!.trim().isNotEmpty)
+        ? ' (REVISED - Audit Note: ${sale.editReason!.trim()})'
+        : '';
+
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/pdf')],
-      subject: '${activeSettings.pharmacyName} Invoice ${sale.invoiceNumber}',
+      subject:
+          '${activeSettings.pharmacyName} Invoice ${sale.invoiceNumber}${sale.editedAt != null ? ' (REVISED)' : ''}',
       text:
-          'Assalam-o-Alaikum, please find attached your invoice (${sale.invoiceNumber}) from ${activeSettings.pharmacyName}, ${activeSettings.address}. Net Payable: ${CurrencyFormatter.format(sale.netPayable, activeSettings)}.',
+          'Assalam-o-Alaikum, please find attached your invoice (${sale.invoiceNumber})$revisedSuffix from ${activeSettings.pharmacyName}, ${activeSettings.address}. Net Payable: ${CurrencyFormatter.format(sale.netPayable, activeSettings)}.',
+    );
+  }
+
+  /// Generates a clean plain-text Khata summary suitable for WhatsApp or SMS.
+  String buildKhataShareText({
+    required CustomerKhataStatement statement,
+    required PharmacySettings settings,
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) {
+    String fmt(double v) => CurrencyFormatter.format(v, settings);
+    String fmtDate(DateTime d) =>
+        CurrencyFormatter.formatDate(d.toIso8601String(), settings);
+
+    final periodStr =
+        '${fromDate != null ? fmtDate(fromDate) : 'Start'} to ${toDate != null ? fmtDate(toDate) : 'Today'}';
+
+    final lines = <String>[
+      '*${settings.pharmacyName.toUpperCase()}*',
+      'Customer Khata Statement',
+      if (settings.phone.trim().isNotEmpty) 'Tel: ${settings.phone.trim()}',
+      '--------------------------------',
+      'Customer: ${statement.party.name}',
+      if (statement.party.phone.trim().isNotEmpty)
+        'Phone: ${statement.party.phone.trim()}',
+      'Period: $periodStr',
+      '--------------------------------',
+      'Total Credit Given: ${fmt(statement.totalCreditGiven)}',
+      'Total Collected: ${fmt(statement.totalCollected)}',
+      '*Current Balance Due: ${fmt(statement.currentBalanceDue)}*',
+      '--------------------------------',
+    ];
+
+    if (fromDate != null && statement.openingBalanceBeforeRange != 0) {
+      lines.add(
+        'Opening Bal (Before ${fmtDate(fromDate)}): ${fmt(statement.openingBalanceBeforeRange)}',
+      );
+    }
+
+    if (statement.rows.isEmpty) {
+      lines.add('No transactions in the selected period.');
+    } else {
+      for (final row in statement.rows) {
+        final dateStr =
+            CurrencyFormatter.formatDate(row.entry.createdAt, settings);
+        final amtStr = row.debit > 0
+            ? '+${fmt(row.debit)} (Credit)'
+            : '-${fmt(row.credit)} (Collected)';
+        lines.add(
+          '$dateStr | ${row.voucherNumber} | ${row.title}${row.entry.editedAt != null ? ' [Edited]' : ''}: $amtStr | Bal: ${fmt(row.runningBalance)}',
+        );
+        if (row.entry.editedAt != null &&
+            row.entry.editReason != null &&
+            row.entry.editReason!.trim().isNotEmpty) {
+          lines.add(
+            '   [Audit: Edited by ${row.entry.editedByName ?? row.entry.editedBy ?? 'Staff'} - ${row.entry.editReason!.trim()}]',
+          );
+        }
+        if (row.items.isNotEmpty) {
+          for (final item in row.items) {
+            lines.add(
+              '   • ${item.itemName} (${item.quantity} ${item.unit} x ${fmt(item.unitPrice)}) = ${fmt(item.lineTotal)}',
+            );
+          }
+        } else if (row.subtitle.isNotEmpty) {
+          lines.add('   • ${row.subtitle}');
+        }
+      }
+    }
+
+    lines.add('--------------------------------');
+    lines.add('Thank you for your continued trust!');
+    return lines.join('\n');
+  }
+
+  Future<void> shareKhataStatementText({
+    required CustomerKhataStatement statement,
+    required PharmacySettings settings,
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
+    final text = buildKhataShareText(
+      statement: statement,
+      settings: settings,
+      fromDate: fromDate,
+      toDate: toDate,
+    );
+    await Share.share(
+      text,
+      subject: 'Khata Statement - ${statement.party.name}',
+    );
+  }
+
+  /// Generates a multi-page A4 PDF Customer Khata Statement including
+  /// chronological running balances and itemized credit purchases.
+  Future<Uint8List> generateKhataStatementPdfBytes({
+    required CustomerKhataStatement statement,
+    PharmacySettings? settings,
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
+    final cfg = settings ?? PharmacySettings.defaults();
+    String fmtMoney(double val) => CurrencyFormatter.format(val, cfg);
+    String fmtDate(String iso, {bool includeTime = false}) =>
+        CurrencyFormatter.formatDate(iso, cfg, includeTime: includeTime);
+
+    final doc = pw.Document(
+      title: 'Khata Statement - ${statement.party.name}',
+      author: cfg.pharmacyName,
+    );
+
+    const primaryColor = PdfColor.fromInt(0xFF0D7A5F);
+    const inkColor = PdfColor.fromInt(0xFF0F172A);
+    const mutedColor = PdfColor.fromInt(0xFF475569);
+    const borderColor = PdfColor.fromInt(0xFFE2E8F0);
+    const surfaceColor = PdfColor.fromInt(0xFFF8FAFC);
+
+    final periodLabel =
+        '${fromDate != null ? fmtDate(fromDate.toIso8601String()) : 'All Dates'} to ${toDate != null ? fmtDate(toDate.toIso8601String()) : 'Today'}';
+
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(24),
+        build: (context) => [
+          // Header
+          pw.Container(
+            padding: const pw.EdgeInsets.only(bottom: 10),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(
+                bottom: pw.BorderSide(color: primaryColor, width: 1.5),
+              ),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      cfg.pharmacyName.toUpperCase(),
+                      style: pw.TextStyle(
+                        fontSize: 14,
+                        fontWeight: pw.FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      cfg.address,
+                      style: const pw.TextStyle(fontSize: 8.5, color: inkColor),
+                    ),
+                    if (cfg.phone.trim().isNotEmpty)
+                      pw.Text(
+                        'Tel: ${cfg.phone.trim()}',
+                        style: const pw.TextStyle(
+                          fontSize: 8,
+                          color: mutedColor,
+                        ),
+                      ),
+                  ],
+                ),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Text(
+                      'CUSTOMER KHATA STATEMENT',
+                      style: pw.TextStyle(
+                        fontSize: 10,
+                        fontWeight: pw.FontWeight.bold,
+                        color: inkColor,
+                      ),
+                    ),
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      'Period: $periodLabel',
+                      style: const pw.TextStyle(
+                        fontSize: 8,
+                        color: mutedColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 12),
+
+          // Customer & Summary Box
+          pw.Container(
+            padding: const pw.EdgeInsets.all(10),
+            decoration: pw.BoxDecoration(
+              color: surfaceColor,
+              border: pw.Border.all(color: borderColor, width: 0.8),
+              borderRadius: pw.BorderRadius.circular(4),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      statement.party.name,
+                      style: pw.TextStyle(
+                        fontSize: 11,
+                        fontWeight: pw.FontWeight.bold,
+                        color: inkColor,
+                      ),
+                    ),
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      'Phone: ${statement.party.phone.isEmpty ? 'N/A' : statement.party.phone}',
+                      style: const pw.TextStyle(
+                        fontSize: 8.5,
+                        color: mutedColor,
+                      ),
+                    ),
+                  ],
+                ),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Text(
+                      'Total Credit Given: ${fmtMoney(statement.totalCreditGiven)}',
+                      style: const pw.TextStyle(fontSize: 8.5, color: inkColor),
+                    ),
+                    pw.Text(
+                      'Total Collected: ${fmtMoney(statement.totalCollected)}',
+                      style: const pw.TextStyle(fontSize: 8.5, color: inkColor),
+                    ),
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      'Current Balance Due: ${fmtMoney(statement.currentBalanceDue)}',
+                      style: pw.TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: pw.FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 12),
+
+          // Timeline Rows
+          if (statement.rows.isEmpty)
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(vertical: 20),
+              child: pw.Center(
+                child: pw.Text(
+                  'No khata transactions recorded in this date range.',
+                  style: const pw.TextStyle(fontSize: 9, color: mutedColor),
+                ),
+              ),
+            )
+          else
+            ...statement.rows.map(
+              (row) => pw.Container(
+                padding: const pw.EdgeInsets.symmetric(
+                  vertical: 6,
+                  horizontal: 4,
+                ),
+                decoration: const pw.BoxDecoration(
+                  border: pw.Border(
+                    bottom: pw.BorderSide(color: borderColor, width: 0.6),
+                  ),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Row(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.SizedBox(
+                          width: 68,
+                          child: pw.Text(
+                            fmtDate(row.entry.createdAt),
+                            style: const pw.TextStyle(
+                              fontSize: 8,
+                              color: inkColor,
+                            ),
+                          ),
+                        ),
+                        pw.SizedBox(
+                          width: 78,
+                          child: pw.Text(
+                            row.voucherNumber,
+                            style: pw.TextStyle(
+                              fontSize: 8,
+                              fontWeight: pw.FontWeight.bold,
+                              color: inkColor,
+                            ),
+                          ),
+                        ),
+                        pw.Expanded(
+                          child: pw.Column(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.Text(
+                                '${row.title}${row.entry.editedAt != null ? ' [Edited]' : ''}',
+                                style: pw.TextStyle(
+                                  fontSize: 8.5,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: inkColor,
+                                ),
+                              ),
+                              if (row.subtitle.isNotEmpty)
+                                pw.Text(
+                                  row.subtitle,
+                                  style: const pw.TextStyle(
+                                    fontSize: 7.5,
+                                    color: mutedColor,
+                                  ),
+                                ),
+                              if (row.entry.editedAt != null &&
+                                  row.entry.editReason != null &&
+                                  row.entry.editReason!.trim().isNotEmpty)
+                                pw.Text(
+                                  'Revised (${fmtDate(row.entry.editedAt!)}) by ${row.entry.editedByName ?? row.entry.editedBy ?? 'Staff'}: ${row.entry.editReason!.trim()}',
+                                  style: const pw.TextStyle(
+                                    fontSize: 7.0,
+                                    color: PdfColor.fromInt(0xFFB45309),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        pw.SizedBox(
+                          width: 68,
+                          child: pw.Text(
+                            row.debit > 0 ? '+${fmtMoney(row.debit)}' : '-',
+                            textAlign: pw.TextAlign.right,
+                            style: const pw.TextStyle(
+                              fontSize: 8,
+                              color: inkColor,
+                            ),
+                          ),
+                        ),
+                        pw.SizedBox(
+                          width: 68,
+                          child: pw.Text(
+                            row.credit > 0 ? '-${fmtMoney(row.credit)}' : '-',
+                            textAlign: pw.TextAlign.right,
+                            style: const pw.TextStyle(
+                              fontSize: 8,
+                              color: primaryColor,
+                            ),
+                          ),
+                        ),
+                        pw.SizedBox(
+                          width: 72,
+                          child: pw.Text(
+                            fmtMoney(row.runningBalance),
+                            textAlign: pw.TextAlign.right,
+                            style: pw.TextStyle(
+                              fontSize: 8,
+                              fontWeight: pw.FontWeight.bold,
+                              color: inkColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (row.items.isNotEmpty)
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.only(left: 146, top: 4),
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: row.items
+                              .map(
+                                (it) => pw.Text(
+                                  '• ${it.itemName} (${it.quantity} ${it.unit} x ${fmtMoney(it.unitPrice)}) = ${fmtMoney(it.lineTotal)}',
+                                  style: const pw.TextStyle(
+                                    fontSize: 7.2,
+                                    color: mutedColor,
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    return doc.save();
+  }
+
+  Future<void> printKhataStatementPdf({
+    required CustomerKhataStatement statement,
+    PharmacySettings? settings,
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
+    final activeSettings =
+        settings ?? await DatabaseHelper.instance.getSettings();
+    final bytes = await generateKhataStatementPdfBytes(
+      statement: statement,
+      settings: activeSettings,
+      fromDate: fromDate,
+      toDate: toDate,
+    );
+    final safeName = statement.party.name
+        .replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    await Printing.layoutPdf(
+      name: 'Khata_${safeName.isEmpty ? 'Statement' : safeName}.pdf',
+      format: PdfPageFormat.a4,
+      onLayout: (_) async => bytes,
     );
   }
 }

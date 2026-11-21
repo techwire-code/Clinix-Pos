@@ -2,14 +2,18 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Download,
+  Edit3,
+  Lock,
   Printer,
   Share2,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 import { PharmacySettings, SaleRecord, ThermalWidth } from '../types/pharmacy';
 import {
   formatDateBySettings,
   formatMoney,
+  isCreditPaymentMode,
   toThermalWidth,
 } from '../services/localDb';
 import { generateEscPosReceipt } from '../services/escPosGenerator';
@@ -23,6 +27,8 @@ interface InvoiceModalProps {
   defaultWidth: ThermalWidth;
   settings?: PharmacySettings;
   autoPrint?: boolean;
+  canEditCreditReceipt?: boolean;
+  onRequestEditCreditReceipt?: (sale: SaleRecord) => void;
   onClose: () => void;
 }
 
@@ -31,6 +37,8 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   defaultWidth,
   settings,
   autoPrint = false,
+  canEditCreditReceipt = false,
+  onRequestEditCreditReceipt,
   onClose,
 }) => {
   const [paperWidth, setPaperWidth] = useState<ThermalWidth>(
@@ -100,14 +108,22 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
     >
       <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-4 dark:border-slate-800">
           <div>
-            <h2
-              id="invoice-modal-title"
-              className="text-lg font-semibold text-slate-900 dark:text-slate-100"
-            >
-              Invoice {sale.invoiceNumber}
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2
+                id="invoice-modal-title"
+                className="text-lg font-semibold text-slate-900 dark:text-slate-100"
+              >
+                Invoice {sale.invoiceNumber}
+              </h2>
+              {sale.editedAt && (
+                <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                  <ShieldCheck className="h-3 w-3" />
+                  Edited
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {sale.partyName} · {sale.paymentMode} ·{' '}
               {formatDateBySettings(sale.createdAt, settings, {
@@ -119,14 +135,36 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
               </span>
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-            aria-label="Close invoice preview"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isCreditPaymentMode(sale.paymentMode) &&
+              onRequestEditCreditReceipt &&
+              (canEditCreditReceipt ? (
+                <button
+                  type="button"
+                  onClick={() => onRequestEditCreditReceipt(sale)}
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 whitespace-nowrap transition-colors hover:bg-amber-100 dark:border-amber-800/70 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50"
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                  <span>Edit Receipt</span>
+                </button>
+              ) : (
+                <span
+                  title="Only Admin or Manager roles can edit credit receipts"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-[11px] font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                >
+                  <Lock className="h-3 w-3" />
+                  <span>Edit Locked (Admin/Mgr)</span>
+                </span>
+              ))}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+              aria-label="Close invoice preview"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -301,6 +339,49 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                   </p>
                 )}
               </div>
+
+              {(sale.editedAt || (sale.auditLogs && sale.auditLogs.length > 0)) && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-[11px] text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  <p className="flex items-center gap-1.5 font-semibold">
+                    <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                    <span>Receipt Edit & Audit Trail</span>
+                  </p>
+                  {sale.auditLogs && sale.auditLogs.length > 0 ? (
+                    <ul className="mt-1.5 space-y-1.5">
+                      {sale.auditLogs.map((log) => (
+                        <li
+                          key={log.id}
+                          className="border-t border-amber-200/70 pt-1.5 first:border-t-0 first:pt-0 dark:border-amber-900/40"
+                        >
+                          <p className="font-medium">
+                            {formatDateBySettings(log.editedAt, settings, {
+                              includeTime: true,
+                            })}{' '}
+                            · {log.editedByName} ({log.editedByRole})
+                          </p>
+                          <p className="opacity-90">
+                            Reason: {log.reason}
+                          </p>
+                          <p className="font-mono-tabular text-[10px] opacity-85">
+                            {log.summary}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1">
+                      Edited{' '}
+                      {sale.editedAt
+                        ? formatDateBySettings(sale.editedAt, settings, {
+                            includeTime: true,
+                          })
+                        : ''}{' '}
+                      by {sale.editedByName || sale.editedBy || 'Manager'} ·{' '}
+                      {sale.editReason}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {shareFeedback && (

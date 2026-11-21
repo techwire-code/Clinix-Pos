@@ -10,6 +10,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/pharmacy_models.dart';
+import '../utils/currency_formatter.dart';
 import '../utils/password_hash.dart';
 
 /// Singleton offline-first SQLite database helper for Clinix Community Pharmacy.
@@ -19,7 +20,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
   static const String _dbName = 'clinix_pharmacy_pos.db';
-  static const int _dbVersion = 5;
+  static const int _dbVersion = 7;
   static const String _settingsPrefsKey = 'clinix_app_settings_v2';
 
   Database? _database;
@@ -194,6 +195,182 @@ class DatabaseHelper {
       await _createUsersTable(db);
       await _seedDefaultUsersIfEmpty(db);
     }
+    if (oldVersion < 6) {
+      await _createKhataTable(db);
+      await _backfillKhataLedger(db);
+    }
+    if (oldVersion < 7) {
+      await _ensureAuditSchema(db);
+    }
+  }
+
+  Future<void> _ensureAuditSchema(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sale_audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sale_id INTEGER NOT NULL,
+        edited_at TEXT NOT NULL,
+        edited_by TEXT NOT NULL,
+        edited_by_name TEXT NOT NULL,
+        edited_by_role TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        previous_net_payable REAL NOT NULL,
+        new_net_payable REAL NOT NULL,
+        previous_discount_amount REAL NOT NULL DEFAULT 0,
+        new_discount_amount REAL NOT NULL DEFAULT 0,
+        summary TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sale_audit_sale_id ON sale_audit_logs(sale_id)',
+    );
+
+    final saleCols = await db.rawQuery('PRAGMA table_info(sales)');
+    final saleColNames =
+        saleCols.map((c) => c['name']?.toString()).whereType<String>().toSet();
+    for (final entry in <String, String>{
+      'edited_at': 'TEXT',
+      'edited_by': 'TEXT',
+      'edited_by_name': 'TEXT',
+      'edit_reason': 'TEXT',
+    }.entries) {
+      if (!saleColNames.contains(entry.key)) {
+        await db.execute(
+          'ALTER TABLE sales ADD COLUMN ${entry.key} ${entry.value}',
+        );
+      }
+    }
+
+    await _createKhataTable(db);
+    final khataCols =
+        await db.rawQuery('PRAGMA table_info(party_ledger_entries)');
+    final khataColNames =
+        khataCols.map((c) => c['name']?.toString()).whereType<String>().toSet();
+    for (final entry in <String, String>{
+      'edited_at': 'TEXT',
+      'edited_by': 'TEXT',
+      'edited_by_name': 'TEXT',
+      'edit_reason': 'TEXT',
+      'previous_amount': 'REAL',
+      'edit_summary': 'TEXT',
+    }.entries) {
+      if (!khataColNames.contains(entry.key)) {
+        await db.execute(
+          'ALTER TABLE party_ledger_entries ADD COLUMN ${entry.key} ${entry.value}',
+        );
+      }
+    }
+  }
+
+  Future<void> _createKhataTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS party_ledger_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        party_id INTEGER NOT NULL,
+        entry_type TEXT NOT NULL CHECK(entry_type IN ('opening_balance', 'credit_sale', 'collection', 'adjustment')),
+        amount REAL NOT NULL DEFAULT 0,
+        sale_id INTEGER,
+        invoice_number TEXT,
+        payment_mode TEXT,
+        reference TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        edited_at TEXT,
+        edited_by TEXT,
+        edited_by_name TEXT,
+        edit_reason TEXT,
+        previous_amount REAL,
+        edit_summary TEXT,
+        FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE CASCADE,
+        FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE SET NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_khata_party_date ON party_ledger_entries(party_id, created_at)',
+    );
+  }
+
+  Future<void> _backfillKhataLedger(Database db) async {
+    await _createKhataTable(db);
+
+    // 1. Ensure every existing credit sale has a corresponding credit_sale entry
+    final creditSales = await db.query(
+      'sales',
+      where: "party_id IS NOT NULL AND payment_mode IN ('Credit / Khata', 'Credit/Party Ledger')",
+      orderBy: 'created_at ASC, id ASC',
+    );
+    for (final s in creditSales) {
+      final saleId = (s['id'] as num?)?.toInt();
+      final partyId = (s['party_id'] as num?)?.toInt();
+      if (saleId == null || partyId == null) continue;
+      final existing = await db.query(
+        'party_ledger_entries',
+        columns: ['id'],
+        where: "entry_type = 'credit_sale' AND sale_id = ?",
+        whereArgs: [saleId],
+        limit: 1,
+      );
+      if (existing.isEmpty) {
+        await db.insert('party_ledger_entries', {
+          'party_id': partyId,
+          'entry_type': 'credit_sale',
+          'amount': (s['net_payable'] as num?)?.toDouble() ?? 0.0,
+          'sale_id': saleId,
+          'invoice_number': s['invoice_number'] as String?,
+          'payment_mode': s['payment_mode'] as String?,
+          'reference': s['transaction_reference'] as String?,
+          'notes': 'Credit sale invoice ${s['invoice_number'] ?? ''}'.trim(),
+          'created_at':
+              (s['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+        });
+      }
+    }
+
+    // 2. Reconcile any opening / brought-forward party balance
+    final parties = await db.query('parties');
+    for (final p in parties) {
+      final partyId = (p['id'] as num?)?.toInt();
+      final currentBal = (p['balance'] as num?)?.toDouble() ?? 0.0;
+      if (partyId == null) continue;
+      final entries = await db.query(
+        'party_ledger_entries',
+        where: 'party_id = ?',
+        whereArgs: [partyId],
+        orderBy: 'created_at ASC, id ASC',
+      );
+      double net = 0.0;
+      bool hasOpening = false;
+      String? earliestDate;
+      for (final e in entries) {
+        final type = (e['entry_type'] as String?) ?? '';
+        final amt = (e['amount'] as num?)?.toDouble() ?? 0.0;
+        if (type == 'opening_balance') hasOpening = true;
+        earliestDate ??= e['created_at'] as String?;
+        if (type == 'collection') {
+          net -= amt;
+        } else {
+          net += amt;
+        }
+      }
+      final diff = double.parse((currentBal - net).toStringAsFixed(2));
+      if (diff > 0.01 && !hasOpening) {
+        DateTime openingTime = DateTime(2026, 11, 1, 9, 0);
+        if (earliestDate != null) {
+          final parsed = DateTime.tryParse(earliestDate);
+          if (parsed != null && !parsed.isAfter(openingTime)) {
+            openingTime = parsed.subtract(const Duration(days: 1));
+          }
+        }
+        await db.insert('party_ledger_entries', {
+          'party_id': partyId,
+          'entry_type': 'opening_balance',
+          'amount': diff,
+          'notes': 'Opening / Brought Forward Balance',
+          'created_at': openingTime.toIso8601String(),
+        });
+      }
+    }
   }
 
   Future<void> _createUsersTable(Database db) async {
@@ -306,6 +483,10 @@ class DatabaseHelper {
         cash_received REAL,
         change_returned REAL,
         created_at TEXT NOT NULL,
+        edited_at TEXT,
+        edited_by TEXT,
+        edited_by_name TEXT,
+        edit_reason TEXT,
         FOREIGN KEY (party_id) REFERENCES parties(id) ON DELETE SET NULL
       )
     ''');
@@ -372,6 +553,10 @@ class DatabaseHelper {
     // 8. Staff Users & Roles Table
     await _createUsersTable(db);
     await _seedDefaultUsersIfEmpty(db);
+
+    // 9. Customer & Party Khata Ledger & Audited Receipt Logs
+    await _createKhataTable(db);
+    await _ensureAuditSchema(db);
 
     await _seedInitialData(db);
   }
@@ -501,6 +686,8 @@ class DatabaseHelper {
         balance: 18500.0,
       ).toMap(),
     );
+
+    await _backfillKhataLedger(db);
   }
 
   // ==================== ITEMS CRUD ====================
@@ -569,7 +756,20 @@ class DatabaseHelper {
 
   Future<int> insertParty(Party party) async {
     final db = await database;
-    return db.insert('parties', party.toMap());
+    await _createKhataTable(db);
+    return db.transaction((txn) async {
+      final partyId = await txn.insert('parties', party.toMap());
+      if (party.balance > 0) {
+        await txn.insert('party_ledger_entries', {
+          'party_id': partyId,
+          'entry_type': 'opening_balance',
+          'amount': party.balance,
+          'notes': 'Opening / Brought Forward Balance',
+          'created_at': DateTime.now().toIso8601String(),
+        });
+      }
+      return partyId;
+    });
   }
 
   Future<int> updateParty(Party party) async {
@@ -599,12 +799,48 @@ class DatabaseHelper {
   Future<void> recordPartySettlement({
     required int partyId,
     required double amountPaidOrCollected,
+    String paymentMode = 'Cash',
+    String? notes,
+    String? reference,
+    DateTime? collectedAt,
   }) async {
+    if (amountPaidOrCollected <= 0) return;
     final db = await database;
-    await db.rawUpdate(
-      'UPDATE parties SET balance = MAX(0, balance - ?) WHERE id = ?',
-      [amountPaidOrCollected, partyId],
-    );
+    await _createKhataTable(db);
+    await db.transaction((txn) async {
+      final partyRows = await txn.query(
+        'parties',
+        where: 'id = ?',
+        whereArgs: [partyId],
+        limit: 1,
+      );
+      if (partyRows.isEmpty) return;
+      final currentBalance =
+          (partyRows.first['balance'] as num?)?.toDouble() ?? 0.0;
+      final applied = amountPaidOrCollected > currentBalance && currentBalance > 0
+          ? currentBalance
+          : amountPaidOrCollected;
+      if (applied <= 0) return;
+
+      await txn.rawUpdate(
+        'UPDATE parties SET balance = MAX(0, balance - ?) WHERE id = ?',
+        [applied, partyId],
+      );
+
+      final cleanNotes = notes?.trim();
+      final cleanRef = reference?.trim();
+      await txn.insert('party_ledger_entries', {
+        'party_id': partyId,
+        'entry_type': 'collection',
+        'amount': applied,
+        'payment_mode': paymentMode,
+        'reference': (cleanRef != null && cleanRef.isNotEmpty) ? cleanRef : null,
+        'notes': (cleanNotes != null && cleanNotes.isNotEmpty)
+            ? cleanNotes
+            : 'Collection received ($paymentMode)',
+        'created_at': (collectedAt ?? DateTime.now()).toIso8601String(),
+      });
+    });
   }
 
   // ==================== TRANSACTIONAL SALE COMPLETION ====================
@@ -731,12 +967,24 @@ class DatabaseHelper {
         await txn.insert('sale_items', saleItem.toMap(saleId));
       }
 
-      // 4. Update customer receivable balance for Credit / Khata sales
+      // 4. Update customer receivable balance & Khata ledger for Credit / Khata sales
       if (paymentMode.isCreditKhata && party?.id != null) {
         await txn.rawUpdate(
           'UPDATE parties SET balance = balance + ? WHERE id = ?',
           [netPayable, party!.id],
         );
+        await txn.insert('party_ledger_entries', {
+          'party_id': party.id,
+          'entry_type': 'credit_sale',
+          'amount': netPayable,
+          'sale_id': saleId,
+          'invoice_number': saleHeader.invoiceNumber,
+          'payment_mode': saleHeader.paymentMode.dbValue,
+          'reference': saleHeader.transactionReference,
+          'notes':
+              '${cartLines.length} medicine line(s) billed on credit',
+          'created_at': saleHeader.createdAt,
+        });
       }
 
       return saleId;
@@ -760,8 +1008,326 @@ class DatabaseHelper {
     );
   }
 
+  Future<List<SaleAuditLogEntry>> getSaleAuditLogs(int saleId) async {
+    final db = await database;
+    await _ensureAuditSchema(db);
+    final rows = await db.query(
+      'sale_audit_logs',
+      where: 'sale_id = ?',
+      whereArgs: [saleId],
+      orderBy: 'id ASC',
+    );
+    return rows.map(SaleAuditLogEntry.fromMap).toList();
+  }
+
+  Future<SaleRecord?> getSaleById(int saleId) async {
+    final db = await database;
+    await _ensureAuditSchema(db);
+    final rows = await db.rawQuery('''
+      SELECT s.*, COALESCE(p.name, 'Walk-in Customer') as party_name
+      FROM sales s
+      LEFT JOIN parties p ON s.party_id = p.id
+      WHERE s.id = ?
+      LIMIT 1
+    ''', [saleId]);
+    if (rows.isEmpty) return null;
+    final base = SaleRecord.fromMap(rows.first);
+    final logs = await getSaleAuditLogs(saleId);
+    return base.copyWith(auditLogs: logs);
+  }
+
+  /// Atomically edits a Credit / Khata receipt with Admin/Manager authorization,
+  /// mandatory audit reason, inventory stock delta reconciliation, Khata ledger update,
+  /// and full customer balance recomputation.
+  Future<SaleRecord> editCreditSale({
+    required int saleId,
+    required List<EditCreditReceiptLineInput> editedLines,
+    required double billDiscount,
+    required String reason,
+    required String editedBy,
+    required String editedByName,
+    required UserRole editedByRole,
+    String? transactionReference,
+    PharmacySettings? settings,
+  }) async {
+    if (!editedByRole.canViewProfitAndCost) {
+      throw StateError(
+        'Only an Admin or Manager account can edit and reconcile a credit receipt.',
+      );
+    }
+    final cleanReason = reason.trim();
+    if (cleanReason.length < 3) {
+      throw ArgumentError(
+        'Please enter an Audit / Correction Reason (at least 3 characters).',
+      );
+    }
+    if (editedLines.isEmpty) {
+      throw StateError('Receipt must contain at least one medicine line item.');
+    }
+    for (final line in editedLines) {
+      if (line.quantity < 1) {
+        throw ArgumentError('Quantity must be at least 1 for "${line.itemName}".');
+      }
+      if (line.unitPrice < 0) {
+        throw ArgumentError('Unit price cannot be negative for "${line.itemName}".');
+      }
+      if (line.itemDiscount < 0) {
+        throw ArgumentError('Discount cannot be negative for "${line.itemName}".');
+      }
+    }
+
+    final db = await database;
+    await _ensureAuditSchema(db);
+    final activeSettings = settings ?? await getSettings();
+    double round2(double v) => double.parse(v.toStringAsFixed(2));
+    String fmt(double v) => CurrencyFormatter.format(v, activeSettings);
+
+    await db.transaction((txn) async {
+      final saleRows = await txn.rawQuery('''
+        SELECT s.*, COALESCE(p.name, 'Walk-in Customer') as party_name
+        FROM sales s
+        LEFT JOIN parties p ON s.party_id = p.id
+        WHERE s.id = ?
+        LIMIT 1
+      ''', [saleId]);
+      if (saleRows.isEmpty) {
+        throw StateError('Original sale receipt was not found.');
+      }
+      final originalSale = SaleRecord.fromMap(saleRows.first);
+      if (!originalSale.paymentMode.isCreditKhata ||
+          originalSale.partyId == null) {
+        throw StateError(
+          'Only Credit / Khata customer receipts can be edited through this audited workflow.',
+        );
+      }
+
+      final origItemRows = await txn.query(
+        'sale_items',
+        where: 'sale_id = ?',
+        whereArgs: [saleId],
+        orderBy: 'id ASC',
+      );
+      final origItems = origItemRows.map(SaleItemRecord.fromMap).toList();
+
+      final oldQtyByItem = <int, int>{};
+      for (final l in origItems) {
+        oldQtyByItem[l.itemId] = (oldQtyByItem[l.itemId] ?? 0) + l.quantity;
+      }
+
+      final newQtyByItem = <int, int>{};
+      for (final l in editedLines) {
+        newQtyByItem[l.itemId] = (newQtyByItem[l.itemId] ?? 0) + l.quantity;
+      }
+
+      final affectedIds = <int>{...oldQtyByItem.keys, ...newQtyByItem.keys};
+      for (final itemId in affectedIds) {
+        final delta =
+            (newQtyByItem[itemId] ?? 0) - (oldQtyByItem[itemId] ?? 0);
+        if (delta == 0) continue;
+        final invRows = await txn.query(
+          'items',
+          columns: ['name', 'stock_quantity'],
+          where: 'id = ?',
+          whereArgs: [itemId],
+          limit: 1,
+        );
+        if (invRows.isEmpty) {
+          if (delta > 0) {
+            throw StateError('Referenced medicine item #$itemId no longer exists.');
+          }
+          continue;
+        }
+        final currentStock = (invRows.first['stock_quantity'] as num).toInt();
+        final itemName = (invRows.first['name'] as String?) ?? 'Medicine #$itemId';
+        if (delta > 0 && currentStock < delta) {
+          throw StateError(
+            'Insufficient stock for $itemName (Available: $currentStock, Additional needed: $delta).',
+          );
+        }
+        await txn.rawUpdate(
+          'UPDATE items SET stock_quantity = MAX(0, stock_quantity - ?) WHERE id = ?',
+          [delta, itemId],
+        );
+      }
+
+      final updatedSaleItems = <SaleItemRecord>[];
+      for (final line in editedLines) {
+        final rate = round2(line.unitPrice < 0 ? 0.0 : line.unitPrice);
+        final gross = round2(rate * line.quantity);
+        final disc = round2(line.itemDiscount.clamp(0.0, gross).toDouble());
+        updatedSaleItems.add(
+          SaleItemRecord(
+            saleId: saleId,
+            itemId: line.itemId,
+            itemName: line.itemName,
+            unit: line.unit,
+            batchNumber: line.batchNumber,
+            quantity: line.quantity,
+            unitPrice: rate,
+            costPrice: line.costPrice,
+            itemDiscount: disc,
+            lineTotal: round2(gross - disc),
+          ),
+        );
+      }
+
+      final subtotal = round2(
+        updatedSaleItems.fold(0.0, (s, l) => s + (l.unitPrice * l.quantity)),
+      );
+      final itemDiscTotal = round2(
+        updatedSaleItems.fold(0.0, (s, l) => s + l.itemDiscount),
+      );
+      final afterItem = (subtotal - itemDiscTotal) < 0
+          ? 0.0
+          : round2(subtotal - itemDiscTotal);
+      final safeBillDisc =
+          round2(billDiscount.clamp(0.0, afterItem).toDouble());
+      final totalDiscount = round2(itemDiscTotal + safeBillDisc);
+      final newNetPayable = round2(afterItem - safeBillDisc);
+      final totalCost = round2(
+        updatedSaleItems.fold(0.0, (s, l) => s + (l.costPrice * l.quantity)),
+      );
+      final newNetProfit = round2(newNetPayable - totalCost);
+
+      final editedAt = DateTime.now().toIso8601String();
+      final prevNet = round2(originalSale.netPayable);
+      final creditDiff = round2(newNetPayable - prevNet);
+      final sign = creditDiff > 0 ? '+' : '';
+      final summaryParts = <String>[
+        'Net credit: ${fmt(prevNet)} -> ${fmt(newNetPayable)} ($sign${fmt(creditDiff)})',
+      ];
+      if ((originalSale.discountAmount - totalDiscount).abs() > 0.005) {
+        summaryParts.add(
+          'Discount: ${fmt(originalSale.discountAmount)} -> ${fmt(totalDiscount)}',
+        );
+      }
+      final oldTotalQty = origItems.fold(0, (s, i) => s + i.quantity);
+      final newTotalQty = updatedSaleItems.fold(0, (s, i) => s + i.quantity);
+      if (oldTotalQty != newTotalQty ||
+          origItems.length != updatedSaleItems.length) {
+        summaryParts.add(
+          'Lines/Qty: ${origItems.length} ($oldTotalQty units) -> ${updatedSaleItems.length} ($newTotalQty units)',
+        );
+      }
+      final summary = summaryParts.join(' · ');
+
+      final cleanRef = transactionReference != null
+          ? (transactionReference.trim().isEmpty
+              ? null
+              : transactionReference.trim())
+          : originalSale.transactionReference;
+
+      await txn.delete('sale_items', where: 'sale_id = ?', whereArgs: [saleId]);
+      for (final si in updatedSaleItems) {
+        await txn.insert('sale_items', si.toMap(saleId));
+      }
+
+      await txn.update(
+        'sales',
+        {
+          'subtotal': subtotal,
+          'discount_amount': totalDiscount,
+          'net_payable': newNetPayable,
+          'total_cost': totalCost,
+          'net_profit': newNetProfit,
+          'transaction_reference': cleanRef,
+          'edited_at': editedAt,
+          'edited_by': editedBy,
+          'edited_by_name': editedByName,
+          'edit_reason': cleanReason,
+        },
+        where: 'id = ?',
+        whereArgs: [saleId],
+      );
+
+      await txn.insert('sale_audit_logs', {
+        'sale_id': saleId,
+        'edited_at': editedAt,
+        'edited_by': editedBy,
+        'edited_by_name': editedByName,
+        'edited_by_role': editedByRole.label,
+        'reason': cleanReason,
+        'previous_net_payable': prevNet,
+        'new_net_payable': newNetPayable,
+        'previous_discount_amount': round2(originalSale.discountAmount),
+        'new_discount_amount': totalDiscount,
+        'summary': summary,
+      });
+
+      final existingLedger = await txn.query(
+        'party_ledger_entries',
+        where: "entry_type = 'credit_sale' AND sale_id = ?",
+        whereArgs: [saleId],
+        limit: 1,
+      );
+      final updatedNotes =
+          '${updatedSaleItems.length} medicine line(s) billed on credit (Edited: $cleanReason)';
+      if (existingLedger.isNotEmpty) {
+        await txn.update(
+          'party_ledger_entries',
+          {
+            'amount': newNetPayable,
+            'reference': cleanRef,
+            'notes': updatedNotes,
+            'edited_at': editedAt,
+            'edited_by': editedBy,
+            'edited_by_name': editedByName,
+            'edit_reason': cleanReason,
+            'previous_amount': prevNet,
+            'edit_summary': summary,
+          },
+          where: 'id = ?',
+          whereArgs: [existingLedger.first['id']],
+        );
+      } else {
+        await txn.insert('party_ledger_entries', {
+          'party_id': originalSale.partyId,
+          'entry_type': 'credit_sale',
+          'amount': newNetPayable,
+          'sale_id': saleId,
+          'invoice_number': originalSale.invoiceNumber,
+          'payment_mode': originalSale.paymentMode.dbValue,
+          'reference': cleanRef,
+          'notes': updatedNotes,
+          'created_at': originalSale.createdAt,
+          'edited_at': editedAt,
+          'edited_by': editedBy,
+          'edited_by_name': editedByName,
+          'edit_reason': cleanReason,
+          'previous_amount': prevNet,
+          'edit_summary': summary,
+        });
+      }
+
+      // Recompute customer's balance strictly from Khata ledger entries
+      final ledgerSumRows = await txn.rawQuery('''
+        SELECT COALESCE(SUM(
+          CASE WHEN entry_type = 'collection' THEN -amount ELSE amount END
+        ), 0.0) as net_bal
+        FROM party_ledger_entries
+        WHERE party_id = ?
+      ''', [originalSale.partyId]);
+      final rawBal =
+          (ledgerSumRows.first['net_bal'] as num?)?.toDouble() ?? 0.0;
+      final recalculatedBal = rawBal < 0 ? 0.0 : round2(rawBal);
+      await txn.update(
+        'parties',
+        {'balance': recalculatedBal},
+        where: 'id = ?',
+        whereArgs: [originalSale.partyId],
+      );
+    });
+
+    final refreshed = await getSaleById(saleId);
+    if (refreshed == null) {
+      throw StateError('Failed to reload edited receipt #$saleId.');
+    }
+    return refreshed;
+  }
+
   Future<List<SaleRecord>> getRecentSales({int limit = 50}) async {
     final db = await database;
+    await _ensureAuditSchema(db);
     final rows = await db.rawQuery('''
       SELECT s.*, COALESCE(p.name, 'Walk-in Customer') as party_name
       FROM sales s
@@ -769,17 +1335,214 @@ class DatabaseHelper {
       ORDER BY s.id DESC
       LIMIT ?
     ''', [limit]);
-    return rows.map(SaleRecord.fromMap).toList();
+    final result = <SaleRecord>[];
+    for (final row in rows) {
+      final sr = SaleRecord.fromMap(row);
+      if (sr.id != null && sr.editedAt != null) {
+        final logs = await getSaleAuditLogs(sr.id!);
+        result.add(sr.copyWith(auditLogs: logs));
+      } else {
+        result.add(sr);
+      }
+    }
+    return result;
   }
 
   Future<List<SaleItemRecord>> getSaleItems(int saleId) async {
     final db = await database;
-    final rows = await db.query(
-      'sale_items',
-      where: 'sale_id = ?',
-      whereArgs: [saleId],
-    );
+    final rows = await db.rawQuery('''
+      SELECT si.*, COALESCE(i.unit, 'Unit') as unit
+      FROM sale_items si
+      LEFT JOIN items i ON si.item_id = i.id
+      WHERE si.sale_id = ?
+      ORDER BY si.id ASC
+    ''', [saleId]);
     return rows.map(SaleItemRecord.fromMap).toList();
+  }
+
+  // ==================== KHATA ACCOUNT STATEMENT ====================
+
+  Future<CustomerKhataStatement> getCustomerKhataStatement(
+    Party party, {
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
+    if (party.id == null) {
+      return CustomerKhataStatement(
+        party: party,
+        openingBalanceBeforeRange: 0,
+        rows: const [],
+        totalCreditGiven: 0,
+        totalCollected: 0,
+        closingBalanceInRange: party.balance,
+        currentBalanceDue: party.balance,
+      );
+    }
+
+    final db = await database;
+    await _backfillKhataLedger(db);
+
+    final freshPartyRows = await db.query(
+      'parties',
+      where: 'id = ?',
+      whereArgs: [party.id],
+      limit: 1,
+    );
+    final freshParty = freshPartyRows.isNotEmpty
+        ? Party.fromMap(freshPartyRows.first)
+        : party;
+
+    final entryRows = await db.query(
+      'party_ledger_entries',
+      where: 'party_id = ?',
+      whereArgs: [freshParty.id],
+      orderBy: 'created_at ASC, id ASC',
+    );
+    final entries = entryRows.map(KhataEntry.fromMap).toList();
+
+    final saleRows = await db.rawQuery('''
+      SELECT s.*, COALESCE(p.name, 'Walk-in Customer') as party_name
+      FROM sales s
+      LEFT JOIN parties p ON s.party_id = p.id
+      WHERE s.party_id = ?
+    ''', [freshParty.id]);
+    final salesById = <int, SaleRecord>{};
+    final salesByInvoice = <String, SaleRecord>{};
+    for (final row in saleRows) {
+      final sr = SaleRecord.fromMap(row);
+      if (sr.id != null) salesById[sr.id!] = sr;
+      salesByInvoice[sr.invoiceNumber] = sr;
+    }
+
+    final DateTime? rangeStart = fromDate != null
+        ? DateTime(fromDate.year, fromDate.month, fromDate.day, 0, 0, 0)
+        : null;
+    final DateTime? rangeEnd = toDate != null
+        ? DateTime(toDate.year, toDate.month, toDate.day, 23, 59, 59, 999)
+        : null;
+
+    double running = 0.0;
+    double openingBeforeRange = 0.0;
+    bool capturedOpening = false;
+    final timeline = <CustomerKhataTimelineRow>[];
+
+    for (final entry in entries) {
+      final isCollection = entry.entryType == KhataEntryType.collection;
+      final debit = isCollection ? 0.0 : entry.amount;
+      final credit = isCollection ? entry.amount : 0.0;
+
+      final dt = DateTime.tryParse(entry.createdAt);
+      final afterFrom = rangeStart == null ||
+          (dt != null && !dt.isBefore(rangeStart));
+      final beforeTo = rangeEnd == null ||
+          (dt != null && !dt.isAfter(rangeEnd));
+
+      if (!capturedOpening && afterFrom) {
+        openingBeforeRange = double.parse(running.toStringAsFixed(2));
+        capturedOpening = true;
+      }
+
+      running = double.parse((running + debit - credit).toStringAsFixed(2));
+
+      if (!afterFrom || !beforeTo) {
+        continue;
+      }
+
+      SaleRecord? linkedSale;
+      List<SaleItemRecord> billItems = const [];
+      if (entry.entryType == KhataEntryType.creditSale) {
+        if (entry.saleId != null && salesById.containsKey(entry.saleId)) {
+          linkedSale = salesById[entry.saleId];
+        } else if (entry.invoiceNumber != null &&
+            salesByInvoice.containsKey(entry.invoiceNumber)) {
+          linkedSale = salesByInvoice[entry.invoiceNumber];
+        }
+        if (linkedSale?.id != null) {
+          billItems = await getSaleItems(linkedSale!.id!);
+          if (linkedSale.editedAt != null) {
+            final logs = await getSaleAuditLogs(linkedSale.id!);
+            linkedSale = linkedSale.copyWith(auditLogs: logs);
+          }
+        }
+      }
+
+      String voucher = 'KH-${(entry.id ?? 0).toString().padLeft(4, '0')}';
+      String title = 'Ledger Entry';
+      String subtitle = (entry.notes ?? '').trim();
+
+      switch (entry.entryType) {
+        case KhataEntryType.openingBalance:
+          title = 'Opening Balance';
+          voucher = 'OPEN-${freshParty.id.toString().padLeft(3, '0')}';
+          if (subtitle.isEmpty) {
+            subtitle = 'Brought forward account balance';
+          }
+          break;
+        case KhataEntryType.creditSale:
+          title = 'Credit Sale (Udhaar)';
+          voucher = entry.invoiceNumber ??
+              linkedSale?.invoiceNumber ??
+              voucher;
+          if (billItems.isNotEmpty) {
+            subtitle =
+                '${billItems.length} medicine line${billItems.length == 1 ? '' : 's'} on credit';
+          } else if (subtitle.isEmpty) {
+            subtitle = 'Credit bill';
+          }
+          break;
+        case KhataEntryType.collection:
+          title = 'Collection Received (Vasooli)';
+          voucher = 'COL-${(entry.id ?? 0).toString().padLeft(4, '0')}';
+          final parts = <String>[
+            if ((entry.paymentMode ?? '').trim().isNotEmpty)
+              entry.paymentMode!.trim(),
+            if ((entry.reference ?? '').trim().isNotEmpty)
+              entry.reference!.trim(),
+            if ((entry.notes ?? '').trim().isNotEmpty) entry.notes!.trim(),
+          ];
+          subtitle = parts.isEmpty ? 'Payment received' : parts.join(' · ');
+          break;
+        case KhataEntryType.adjustment:
+          title = 'Balance Adjustment';
+          voucher = 'ADJ-${(entry.id ?? 0).toString().padLeft(4, '0')}';
+          if (subtitle.isEmpty) subtitle = 'Manual ledger adjustment';
+          break;
+      }
+
+      timeline.add(
+        CustomerKhataTimelineRow(
+          entry: entry,
+          voucherNumber: voucher,
+          title: title,
+          subtitle: subtitle,
+          debit: debit,
+          credit: credit,
+          runningBalance: running,
+          sale: linkedSale,
+          items: billItems,
+        ),
+      );
+    }
+
+    if (!capturedOpening) {
+      openingBeforeRange = double.parse(running.toStringAsFixed(2));
+    }
+
+    final totalCredit = timeline.fold(0.0, (sum, r) => sum + r.debit);
+    final totalCollected = timeline.fold(0.0, (sum, r) => sum + r.credit);
+    final closingInRange = timeline.isNotEmpty
+        ? timeline.last.runningBalance
+        : openingBeforeRange;
+
+    return CustomerKhataStatement(
+      party: freshParty,
+      openingBalanceBeforeRange: openingBeforeRange,
+      rows: timeline,
+      totalCreditGiven: double.parse(totalCredit.toStringAsFixed(2)),
+      totalCollected: double.parse(totalCollected.toStringAsFixed(2)),
+      closingBalanceInRange: closingInRange,
+      currentBalanceDue: freshParty.balance,
+    );
   }
 
   // ==================== TRANSACTIONAL PURCHASE & SUPPLIER STOCK-IN ====================
@@ -1038,14 +1801,25 @@ class DatabaseHelper {
     return backupPath;
   }
 
-  /// Exports a JSON snapshot including settings, managed staff users, items, and parties.
+  /// Exports a JSON snapshot including settings, managed staff users, items, parties, khata entries, and audit logs.
   Future<String> exportDatabaseBackupJson() async {
+    final db = await database;
+    await _createKhataTable(db);
+    await _ensureAuditSchema(db);
     final settings = await getSettings();
     final users = await getUsers();
     final items = await getItems();
     final parties = await getParties();
     final sales = await getRecentSales(limit: 1000);
     final purchases = await getRecentPurchases(limit: 1000);
+    final khataRows = await db.query(
+      'party_ledger_entries',
+      orderBy: 'created_at ASC, id ASC',
+    );
+    final auditRows = await db.query(
+      'sale_audit_logs',
+      orderBy: 'id ASC',
+    );
     final payload = <String, dynamic>{
       'app': 'Clinix Community Pharmacy POS',
       'schemaVersion': _dbVersion,
@@ -1057,6 +1831,8 @@ class DatabaseHelper {
         'parties': parties.map((p) => p.toMap()).toList(),
         'sales': sales.map((s) => s.toMap()).toList(),
         'purchases': purchases.map((p) => p.toMap()).toList(),
+        'khata_entries': khataRows,
+        'sale_audit_logs': auditRows,
       },
     };
     return const JsonEncoder.withIndent('  ').convert(payload);

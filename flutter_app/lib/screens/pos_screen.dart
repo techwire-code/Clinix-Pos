@@ -7,6 +7,7 @@ import '../models/pharmacy_models.dart';
 import '../services/pdf_invoice_service.dart';
 import '../services/printer_service.dart';
 import '../utils/currency_formatter.dart';
+import 'edit_credit_receipt_dialog.dart';
 
 /// Point of Sale & Real-time Cart Management Screen for Clinix Community Pharmacy.
 /// Strictly tuned for Mobile (< 600: 2-tab Catalog / Cart + Sticky Checkout Bar)
@@ -14,6 +15,7 @@ import '../utils/currency_formatter.dart';
 class PosScreen extends StatefulWidget {
   final PharmacySettings settings;
   final UserRole? currentUserRole;
+  final PharmacyUser? currentUser;
   final VoidCallback? onOpenDrawer;
   final VoidCallback? onInspectDartSource;
   final VoidCallback? onOpenBarcodeCamera;
@@ -22,6 +24,7 @@ class PosScreen extends StatefulWidget {
     super.key,
     this.settings = const PharmacySettings(),
     this.currentUserRole,
+    this.currentUser,
     this.onOpenDrawer,
     this.onInspectDartSource,
     this.onOpenBarcodeCamera,
@@ -71,7 +74,19 @@ class _PosScreenState extends State<PosScreen>
   String get _curUnit => CurrencyFormatter.unitLabel(widget.settings);
 
   UserRole get _effectiveRole =>
-      widget.currentUserRole ?? widget.settings.activeUserRole;
+      widget.currentUser?.role ??
+      widget.currentUserRole ??
+      widget.settings.activeUserRole;
+
+  PharmacyUser get _effectiveUser =>
+      widget.currentUser ??
+      PharmacyUser(
+        name: _effectiveRole.label,
+        username: _effectiveRole.name,
+        role: _effectiveRole,
+        pinOrPassword: '',
+        createdAt: '',
+      );
 
   bool get _isManagerOrAdmin => _effectiveRole.canViewProfitAndCost;
 
@@ -352,75 +367,170 @@ class _PosScreenState extends State<PosScreen>
     SaleRecord sale,
     List<SaleItemRecord> items,
   ) async {
+    var activeSale = sale;
+    var activeItems = items;
+
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Sale Completed · ${sale.invoiceNumber}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Party: ${sale.partyName}'),
-            Text('Payment Mode: ${sale.paymentMode.dbValue}'),
-            if (sale.transactionReference != null &&
-                sale.transactionReference!.isNotEmpty)
-              Text('Reference: ${sale.transactionReference}'),
-            Text('Subtotal: ${_fmt(sale.subtotal)}'),
-            if (sale.discountAmount > 0)
-              Text(
-                'Discount: -${_fmt(sale.discountAmount)}',
-                style: TextStyle(color: Colors.amber[800]),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Sale Completed · ${activeSale.invoiceNumber}',
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
-            const SizedBox(height: 6),
-            Text(
-              'Net Payable: ${_fmt(sale.netPayable)}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            if (sale.cashReceived != null) ...[
-              Text('Cash Received: ${_fmt(sale.cashReceived!)}'),
-              Text(
-                'Balance / Change: ${_fmt(sale.changeReturned ?? (sale.cashReceived! - sale.netPayable))}',
-              ),
+              if (activeSale.editedAt != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade100,
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Text(
+                    'Edited',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.amber.shade900,
+                    ),
+                  ),
+                ),
             ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Party: ${activeSale.partyName}'),
+                Text('Payment Mode: ${activeSale.paymentMode.dbValue}'),
+                if (activeSale.transactionReference != null &&
+                    activeSale.transactionReference!.isNotEmpty)
+                  Text('Reference: ${activeSale.transactionReference}'),
+                Text('Subtotal: ${_fmt(activeSale.subtotal)}'),
+                if (activeSale.discountAmount > 0)
+                  Text(
+                    'Discount: -${_fmt(activeSale.discountAmount)}',
+                    style: TextStyle(color: Colors.amber[800]),
+                  ),
+                const SizedBox(height: 6),
+                Text(
+                  'Net Payable: ${_fmt(activeSale.netPayable)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                if (activeSale.cashReceived != null) ...[
+                  Text('Cash Received: ${_fmt(activeSale.cashReceived!)}'),
+                  Text(
+                    'Balance / Change: ${_fmt(activeSale.changeReturned ?? (activeSale.cashReceived! - activeSale.netPayable))}',
+                  ),
+                ],
+                if (activeSale.editedAt != null &&
+                    activeSale.editReason != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.amber.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Edited by ${activeSale.editedByName ?? activeSale.editedBy ?? 'Staff'}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          'Reason: ${activeSale.editReason}',
+                          style: const TextStyle(fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+            if (activeSale.paymentMode.isCreditKhata && _isManagerOrAdmin)
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final updated = await Navigator.of(context).push<SaleRecord?>(
+                    MaterialPageRoute(
+                      builder: (_) => EditCreditReceiptScreen(
+                        sale: activeSale,
+                        initialSaleItems: activeItems,
+                        settings: widget.settings,
+                        currentUser: _effectiveUser,
+                      ),
+                    ),
+                  );
+                  if (updated != null && updated.id != null) {
+                    final freshItems = await DatabaseHelper.instance
+                        .getSaleItems(updated.id!);
+                    await _loadData();
+                    if (ctx.mounted) {
+                      setDialogState(() {
+                        activeSale = updated;
+                        activeItems = freshItems;
+                      });
+                    }
+                    _showSnack(
+                      'Receipt ${updated.invoiceNumber} corrected & Khata reconciled.',
+                    );
+                  }
+                },
+                icon: const Icon(Icons.edit_outlined, size: 17),
+                label: const Text('Edit Receipt'),
+              ),
+            OutlinedButton.icon(
+              onPressed: () async {
+                try {
+                  await PdfInvoiceService.instance.shareInvoicePdf(
+                    sale: activeSale,
+                    items: activeItems,
+                    settings: widget.settings,
+                  );
+                } catch (e) {
+                  _showSnack('PDF share error: $e', isError: true);
+                }
+              },
+              icon: const Icon(Icons.share),
+              label: const Text('Share A5 PDF'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                try {
+                  await PrinterService.instance.printReceipt(
+                    sale: activeSale,
+                    items: activeItems,
+                    settings: widget.settings,
+                  );
+                  _showSnack('Thermal receipt sent to Bluetooth printer.');
+                } catch (e) {
+                  _showSnack('Print error: $e', isError: true);
+                }
+              },
+              icon: const Icon(Icons.print),
+              label: const Text('Print Thermal'),
+            ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Close'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () async {
-              try {
-                await PdfInvoiceService.instance.shareInvoicePdf(
-                  sale: sale,
-                  items: items,
-                  settings: widget.settings,
-                );
-              } catch (e) {
-                _showSnack('PDF share error: $e', isError: true);
-              }
-            },
-            icon: const Icon(Icons.share),
-            label: const Text('Share A5 PDF'),
-          ),
-          FilledButton.icon(
-            onPressed: () async {
-              try {
-                await PrinterService.instance.printReceipt(
-                  sale: sale,
-                  items: items,
-                  settings: widget.settings,
-                );
-                _showSnack('Thermal receipt sent to Bluetooth printer.');
-              } catch (e) {
-                _showSnack('Print error: $e', isError: true);
-              }
-            },
-            icon: const Icon(Icons.print),
-            label: const Text('Print Thermal'),
-          ),
-        ],
       ),
     );
   }

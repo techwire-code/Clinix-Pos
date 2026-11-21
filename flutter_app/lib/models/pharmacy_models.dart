@@ -348,6 +348,92 @@ class CartLine {
   }
 }
 
+class SaleAuditLogEntry {
+  final int? id;
+  final int saleId;
+  final String editedAt;
+  final String editedBy;
+  final String editedByName;
+  final String editedByRole;
+  final String reason;
+  final double previousNetPayable;
+  final double newNetPayable;
+  final double previousDiscountAmount;
+  final double newDiscountAmount;
+  final String summary;
+
+  const SaleAuditLogEntry({
+    this.id,
+    required this.saleId,
+    required this.editedAt,
+    required this.editedBy,
+    required this.editedByName,
+    required this.editedByRole,
+    required this.reason,
+    required this.previousNetPayable,
+    required this.newNetPayable,
+    required this.previousDiscountAmount,
+    required this.newDiscountAmount,
+    required this.summary,
+  });
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'sale_id': saleId,
+        'edited_at': editedAt,
+        'edited_by': editedBy,
+        'edited_by_name': editedByName,
+        'edited_by_role': editedByRole,
+        'reason': reason,
+        'previous_net_payable': previousNetPayable,
+        'new_net_payable': newNetPayable,
+        'previous_discount_amount': previousDiscountAmount,
+        'new_discount_amount': newDiscountAmount,
+        'summary': summary,
+      };
+
+  factory SaleAuditLogEntry.fromMap(Map<String, dynamic> map) =>
+      SaleAuditLogEntry(
+        id: (map['id'] as num?)?.toInt(),
+        saleId: (map['sale_id'] as num).toInt(),
+        editedAt: (map['edited_at'] as String?) ?? '',
+        editedBy: (map['edited_by'] as String?) ?? '',
+        editedByName: (map['edited_by_name'] as String?) ?? '',
+        editedByRole: (map['edited_by_role'] as String?) ?? '',
+        reason: (map['reason'] as String?) ?? '',
+        previousNetPayable:
+            (map['previous_net_payable'] as num?)?.toDouble() ?? 0.0,
+        newNetPayable: (map['new_net_payable'] as num?)?.toDouble() ?? 0.0,
+        previousDiscountAmount:
+            (map['previous_discount_amount'] as num?)?.toDouble() ?? 0.0,
+        newDiscountAmount:
+            (map['new_discount_amount'] as num?)?.toDouble() ?? 0.0,
+        summary: (map['summary'] as String?) ?? '',
+      );
+}
+
+class EditCreditReceiptLineInput {
+  final int itemId;
+  final String itemName;
+  final String unit;
+  final String batchNumber;
+  final int quantity;
+  final double unitPrice;
+  final double costPrice;
+  final double itemDiscount;
+
+  const EditCreditReceiptLineInput({
+    required this.itemId,
+    required this.itemName,
+    this.unit = 'Unit',
+    this.batchNumber = '',
+    required this.quantity,
+    required this.unitPrice,
+    required this.costPrice,
+    this.itemDiscount = 0.0,
+  });
+}
+
 class SaleRecord {
   final int? id;
   final String invoiceNumber;
@@ -363,6 +449,11 @@ class SaleRecord {
   final double? cashReceived;
   final double? changeReturned;
   final String createdAt;
+  final String? editedAt;
+  final String? editedBy;
+  final String? editedByName;
+  final String? editReason;
+  final List<SaleAuditLogEntry> auditLogs;
 
   const SaleRecord({
     this.id,
@@ -379,7 +470,56 @@ class SaleRecord {
     this.cashReceived,
     this.changeReturned,
     required this.createdAt,
+    this.editedAt,
+    this.editedBy,
+    this.editedByName,
+    this.editReason,
+    this.auditLogs = const [],
   });
+
+  SaleRecord copyWith({
+    int? id,
+    String? invoiceNumber,
+    int? partyId,
+    String? partyName,
+    double? subtotal,
+    double? discountAmount,
+    double? netPayable,
+    double? totalCost,
+    double? netProfit,
+    PaymentMode? paymentMode,
+    String? transactionReference,
+    double? cashReceived,
+    double? changeReturned,
+    String? createdAt,
+    String? editedAt,
+    String? editedBy,
+    String? editedByName,
+    String? editReason,
+    List<SaleAuditLogEntry>? auditLogs,
+  }) {
+    return SaleRecord(
+      id: id ?? this.id,
+      invoiceNumber: invoiceNumber ?? this.invoiceNumber,
+      partyId: partyId ?? this.partyId,
+      partyName: partyName ?? this.partyName,
+      subtotal: subtotal ?? this.subtotal,
+      discountAmount: discountAmount ?? this.discountAmount,
+      netPayable: netPayable ?? this.netPayable,
+      totalCost: totalCost ?? this.totalCost,
+      netProfit: netProfit ?? this.netProfit,
+      paymentMode: paymentMode ?? this.paymentMode,
+      transactionReference: transactionReference ?? this.transactionReference,
+      cashReceived: cashReceived ?? this.cashReceived,
+      changeReturned: changeReturned ?? this.changeReturned,
+      createdAt: createdAt ?? this.createdAt,
+      editedAt: editedAt ?? this.editedAt,
+      editedBy: editedBy ?? this.editedBy,
+      editedByName: editedByName ?? this.editedByName,
+      editReason: editReason ?? this.editReason,
+      auditLogs: auditLogs ?? this.auditLogs,
+    );
+  }
 
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
@@ -395,6 +535,10 @@ class SaleRecord {
         'cash_received': cashReceived,
         'change_returned': changeReturned,
         'created_at': createdAt,
+        'edited_at': editedAt,
+        'edited_by': editedBy,
+        'edited_by_name': editedByName,
+        'edit_reason': editReason,
       };
 
   factory SaleRecord.fromMap(Map<String, dynamic> map) => SaleRecord(
@@ -412,6 +556,10 @@ class SaleRecord {
         cashReceived: (map['cash_received'] as num?)?.toDouble(),
         changeReturned: (map['change_returned'] as num?)?.toDouble(),
         createdAt: map['created_at'] as String,
+        editedAt: map['edited_at'] as String?,
+        editedBy: map['edited_by'] as String?,
+        editedByName: map['edited_by_name'] as String?,
+        editReason: map['edit_reason'] as String?,
       );
 }
 
@@ -420,6 +568,7 @@ class SaleItemRecord {
   final int? saleId;
   final int itemId;
   final String itemName;
+  final String unit;
   final String batchNumber;
   final int quantity;
   final double unitPrice;
@@ -432,6 +581,7 @@ class SaleItemRecord {
     this.saleId,
     required this.itemId,
     required this.itemName,
+    this.unit = 'Unit',
     this.batchNumber = '',
     required this.quantity,
     required this.unitPrice,
@@ -458,6 +608,9 @@ class SaleItemRecord {
         saleId: map['sale_id'] as int?,
         itemId: (map['item_id'] as num).toInt(),
         itemName: map['item_name'] as String,
+        unit: ((map['unit'] as String?) ?? '').trim().isEmpty
+            ? 'Unit'
+            : (map['unit'] as String).trim(),
         batchNumber: (map['batch_number'] ?? '') as String,
         quantity: (map['quantity'] as num).toInt(),
         unitPrice: (map['unit_price'] as num).toDouble(),
@@ -987,4 +1140,158 @@ class PharmacyUser {
   factory PharmacyUser.fromJson(Map<String, dynamic> json) =>
       PharmacyUser.fromMap(json);
 }
+
+enum KhataEntryType { openingBalance, creditSale, collection, adjustment }
+
+extension KhataEntryTypeX on KhataEntryType {
+  String get dbValue {
+    switch (this) {
+      case KhataEntryType.openingBalance:
+        return 'opening_balance';
+      case KhataEntryType.creditSale:
+        return 'credit_sale';
+      case KhataEntryType.collection:
+        return 'collection';
+      case KhataEntryType.adjustment:
+        return 'adjustment';
+    }
+  }
+
+  static KhataEntryType fromDb(String? raw) {
+    switch ((raw ?? '').trim().toLowerCase()) {
+      case 'opening_balance':
+        return KhataEntryType.openingBalance;
+      case 'credit_sale':
+        return KhataEntryType.creditSale;
+      case 'collection':
+        return KhataEntryType.collection;
+      case 'adjustment':
+        return KhataEntryType.adjustment;
+      default:
+        return KhataEntryType.adjustment;
+    }
+  }
+}
+
+class KhataEntry {
+  final int? id;
+  final int partyId;
+  final KhataEntryType entryType;
+  final double amount;
+  final int? saleId;
+  final String? invoiceNumber;
+  final String? paymentMode;
+  final String? reference;
+  final String? notes;
+  final String createdAt;
+  final String? editedAt;
+  final String? editedBy;
+  final String? editedByName;
+  final String? editReason;
+  final double? previousAmount;
+  final String? editSummary;
+
+  const KhataEntry({
+    this.id,
+    required this.partyId,
+    required this.entryType,
+    required this.amount,
+    this.saleId,
+    this.invoiceNumber,
+    this.paymentMode,
+    this.reference,
+    this.notes,
+    required this.createdAt,
+    this.editedAt,
+    this.editedBy,
+    this.editedByName,
+    this.editReason,
+    this.previousAmount,
+    this.editSummary,
+  });
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'party_id': partyId,
+        'entry_type': entryType.dbValue,
+        'amount': amount,
+        'sale_id': saleId,
+        'invoice_number': invoiceNumber,
+        'payment_mode': paymentMode,
+        'reference': reference,
+        'notes': notes,
+        'created_at': createdAt,
+        'edited_at': editedAt,
+        'edited_by': editedBy,
+        'edited_by_name': editedByName,
+        'edit_reason': editReason,
+        'previous_amount': previousAmount,
+        'edit_summary': editSummary,
+      };
+
+  factory KhataEntry.fromMap(Map<String, dynamic> map) => KhataEntry(
+        id: (map['id'] as num?)?.toInt(),
+        partyId: (map['party_id'] as num).toInt(),
+        entryType: KhataEntryTypeX.fromDb(map['entry_type'] as String?),
+        amount: (map['amount'] as num?)?.toDouble() ?? 0.0,
+        saleId: (map['sale_id'] as num?)?.toInt(),
+        invoiceNumber: map['invoice_number'] as String?,
+        paymentMode: map['payment_mode'] as String?,
+        reference: map['reference'] as String?,
+        notes: map['notes'] as String?,
+        createdAt:
+            (map['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+        editedAt: map['edited_at'] as String?,
+        editedBy: map['edited_by'] as String?,
+        editedByName: map['edited_by_name'] as String?,
+        editReason: map['edit_reason'] as String?,
+        previousAmount: (map['previous_amount'] as num?)?.toDouble(),
+        editSummary: map['edit_summary'] as String?,
+      );
+}
+
+class CustomerKhataTimelineRow {
+  final KhataEntry entry;
+  final String voucherNumber;
+  final String title;
+  final String subtitle;
+  final double debit;
+  final double credit;
+  final double runningBalance;
+  final SaleRecord? sale;
+  final List<SaleItemRecord> items;
+
+  const CustomerKhataTimelineRow({
+    required this.entry,
+    required this.voucherNumber,
+    required this.title,
+    required this.subtitle,
+    required this.debit,
+    required this.credit,
+    required this.runningBalance,
+    this.sale,
+    this.items = const [],
+  });
+}
+
+class CustomerKhataStatement {
+  final Party party;
+  final double openingBalanceBeforeRange;
+  final List<CustomerKhataTimelineRow> rows;
+  final double totalCreditGiven;
+  final double totalCollected;
+  final double closingBalanceInRange;
+  final double currentBalanceDue;
+
+  const CustomerKhataStatement({
+    required this.party,
+    required this.openingBalanceBeforeRange,
+    required this.rows,
+    required this.totalCreditGiven,
+    required this.totalCollected,
+    required this.closingBalanceInRange,
+    required this.currentBalanceDue,
+  });
+}
+
 

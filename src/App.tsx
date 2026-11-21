@@ -21,6 +21,7 @@ import {
 import {
   CartLine,
   ExpenseRecord,
+  KhataEntry,
   Party,
   PaymentMode,
   PharmacyItem,
@@ -35,19 +36,24 @@ import {
 import {
   addPharmacyUser,
   calculateUnitPrice,
+  createPartyWithLedger,
   deletePharmacyUser,
+  editCreditSaleTransaction,
+  EditCreditReceiptLineInput,
   executePurchaseTransaction,
   executeSaleTransaction,
   exportDatabaseBackupJson,
   isCreditPaymentMode,
   loadExpenses,
   loadItems,
+  loadKhataEntries,
   loadParties,
   loadPrinterConfig,
   loadPurchases,
   loadSales,
   loadSettings,
   loadUsers,
+  recordPartySettlementTransaction,
   resetDemoDatabase,
   resetSettingsToDefaults,
   saveExpenses,
@@ -77,6 +83,7 @@ import { PrinterAndSalesWorkspace } from './components/PrinterAndSalesWorkspace'
 import { SettingsWorkspace } from './components/SettingsWorkspace';
 import { DartSourceWorkspace } from './components/DartSourceWorkspace';
 import { InvoiceModal } from './components/InvoiceModal';
+import { EditCreditReceiptModal } from './components/EditCreditReceiptModal';
 import {
   applyThemePreference,
   loadThemePreference,
@@ -199,6 +206,9 @@ export default function App() {
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(() =>
     loadExpenses(),
   );
+  const [khataEntries, setKhataEntries] = useState<KhataEntry[]>(() =>
+    loadKhataEntries(),
+  );
   const [printerConfig, setPrinterConfig] = useState<PrinterConfig>(() =>
     loadPrinterConfig(),
   );
@@ -207,6 +217,9 @@ export default function App() {
   );
   const [activeInvoice, setActiveInvoice] = useState<SaleRecord | null>(null);
   const [shouldAutoPrintInvoice, setShouldAutoPrintInvoice] = useState(false);
+  const [editingCreditSale, setEditingCreditSale] = useState<SaleRecord | null>(
+    null,
+  );
   const [theme, setTheme] = useState<ThemeMode>(() => loadThemePreference());
 
   useEffect(() => {
@@ -315,12 +328,51 @@ export default function App() {
       currentItems: items,
       currentParties: parties,
       currentSales: sales,
+      currentKhataEntries: khataEntries,
     });
     setItems(result.updatedItems);
     setParties(result.updatedParties);
     setSales(result.updatedSales);
+    setKhataEntries(result.updatedKhataEntries);
     setShouldAutoPrintInvoice(settings.autoPrintReceipt);
     setActiveInvoice(result.sale);
+  };
+
+  const handleSaveCreditSaleEdit = (params: {
+    saleId: number;
+    editedLines: EditCreditReceiptLineInput[];
+    billDiscount: number;
+    reason: string;
+    transactionReference?: string;
+  }) => {
+    if (!session || isLimitedUser) {
+      throw new Error(
+        'Only an Admin or Manager account can edit credit receipts.',
+      );
+    }
+    const result = editCreditSaleTransaction({
+      saleId: params.saleId,
+      editedLines: params.editedLines,
+      billDiscount: params.billDiscount,
+      reason: params.reason,
+      editedBy: session.username,
+      editedByName: session.displayName,
+      editedByRole: session.role,
+      transactionReference: params.transactionReference,
+      settings,
+      currentItems: items,
+      currentParties: parties,
+      currentSales: sales,
+      currentKhataEntries: khataEntries,
+    });
+    setItems(result.updatedItems);
+    setParties(result.updatedParties);
+    setSales(result.updatedSales);
+    setKhataEntries(result.updatedKhataEntries);
+    if (activeInvoice && activeInvoice.id === result.sale.id) {
+      setActiveInvoice(result.sale);
+    }
+    setEditingCreditSale(null);
   };
 
   const handleCompletePurchase = (params: {
@@ -468,25 +520,42 @@ export default function App() {
 
   const handleAddParty = (payload: Omit<Party, 'id'>) => {
     if (isLimitedUser) return;
-    setParties((prev) => {
-      const nextId = prev.reduce((max, p) => Math.max(max, p.id), 0) + 1;
-      const next = [...prev, { ...payload, id: nextId }];
-      saveParties(next);
-      return next;
+    const result = createPartyWithLedger({
+      payload,
+      currentParties: parties,
+      currentKhataEntries: khataEntries,
+      createdBy: session?.username,
+      createdByName: session?.displayName,
     });
+    setParties(result.updatedParties);
+    setKhataEntries(result.updatedKhataEntries);
   };
 
-  const handleSettleBalance = (partyId: number, amount: number) => {
+  const handleSettleBalance = (
+    partyId: number,
+    amount: number,
+    details?: {
+      paymentMode?: string;
+      notes?: string;
+      reference?: string;
+      collectedAt?: string;
+    },
+  ) => {
     if (isLimitedUser) return;
-    setParties((prev) => {
-      const next = prev.map((p) =>
-        p.id === partyId
-          ? { ...p, balance: Math.max(0, p.balance - amount) }
-          : p,
-      );
-      saveParties(next);
-      return next;
+    const result = recordPartySettlementTransaction({
+      partyId,
+      amount,
+      paymentMode: details?.paymentMode ?? 'Cash',
+      notes: details?.notes,
+      reference: details?.reference,
+      collectedAt: details?.collectedAt,
+      createdBy: session?.username,
+      createdByName: session?.displayName,
+      currentParties: parties,
+      currentKhataEntries: khataEntries,
     });
+    setParties(result.updatedParties);
+    setKhataEntries(result.updatedKhataEntries);
   };
 
   const handleUpdatePrinterConfig = (next: PrinterConfig) => {
@@ -606,6 +675,7 @@ export default function App() {
     setSales(restored.sales);
     setPurchases(restored.purchases);
     setExpenses(restored.expenses);
+    setKhataEntries(restored.khataEntries);
     setPrinterConfig(restored.printer);
     setSettings(restored.settings);
     setActiveInvoice(null);
@@ -954,9 +1024,20 @@ export default function App() {
           {!isLimitedUser && resolvedActiveTab === 'parties' && (
             <PartiesWorkspace
               parties={parties}
+              sales={sales}
+              items={items}
+              khataEntries={khataEntries}
               settings={settings}
+              canEditCreditReceipt={!isLimitedUser}
               onAddParty={handleAddParty}
               onSettleBalance={handleSettleBalance}
+              onOpenInvoiceModal={(sale) => {
+                setShouldAutoPrintInvoice(false);
+                setActiveInvoice(sale);
+              }}
+              onRequestEditCreditReceipt={(sale) => {
+                setEditingCreditSale(sale);
+              }}
             />
           )}
 
@@ -1026,10 +1107,27 @@ export default function App() {
           defaultWidth={toThermalWidth(settings.thermalPaperWidth)}
           settings={settings}
           autoPrint={shouldAutoPrintInvoice}
+          canEditCreditReceipt={!isLimitedUser}
+          onRequestEditCreditReceipt={(sale) => {
+            setEditingCreditSale(sale);
+          }}
           onClose={() => {
             setActiveInvoice(null);
             setShouldAutoPrintInvoice(false);
           }}
+        />
+      )}
+
+      {/* Audited Credit Receipt Edit Modal */}
+      {editingCreditSale && (
+        <EditCreditReceiptModal
+          sale={editingCreditSale}
+          items={items}
+          settings={settings}
+          canEdit={!isLimitedUser}
+          activeRoleLabel={session.role}
+          onClose={() => setEditingCreditSale(null)}
+          onSaveEdit={handleSaveCreditSaleEdit}
         />
       )}
     </div>

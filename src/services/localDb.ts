@@ -11,9 +11,12 @@ import {
   CartLine,
   CounterRole,
   CurrencyPreset,
+  CustomerKhataStatement,
+  CustomerKhataTimelineRow,
   DateFormatOption,
   DecimalDigits,
   ExpenseRecord,
+  KhataEntry,
   Party,
   PaymentMode,
   PharmacyItem,
@@ -24,6 +27,7 @@ import {
   PurchaseDraftLine,
   PurchaseItemRecord,
   PurchaseRecord,
+  SaleAuditLogEntry,
   SaleItemRecord,
   SaleRecord,
   SymbolPosition,
@@ -41,6 +45,7 @@ const STORAGE_KEYS = {
   sales: 'clinix_pos_sales_v1',
   purchases: 'clinix_pos_purchases_v1',
   expenses: 'clinix_pos_expenses_v1',
+  khata: 'clinix_pos_khata_v1',
   printer: 'clinix_pos_printer_v1',
   settings: 'clinix_pos_settings_v1',
   users: 'clinix_pos_users_v1',
@@ -413,6 +418,327 @@ export function loadPurchases(): PurchaseRecord[] {
 
 export function savePurchases(purchases: PurchaseRecord[]): void {
   writeStorage(STORAGE_KEYS.purchases, purchases);
+}
+
+export function reconcileKhataEntries(
+  parties: Party[],
+  sales: SaleRecord[],
+  existingEntries: KhataEntry[],
+): KhataEntry[] {
+  const entries: KhataEntry[] = existingEntries.map((entry) => ({
+    ...entry,
+    amount: Math.max(0, Number(entry.amount) || 0),
+  }));
+  let nextId = entries.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+
+  // 1. Ensure every credit sale has a corresponding 'credit_sale' KhataEntry
+  for (const sale of sales) {
+    if (!sale.partyId || !isCreditPaymentMode(sale.paymentMode)) continue;
+    const exists = entries.some(
+      (e) =>
+        e.entryType === 'credit_sale' &&
+        e.partyId === sale.partyId &&
+        ((sale.id && e.saleId === sale.id) ||
+          (sale.invoiceNumber && e.invoiceNumber === sale.invoiceNumber)),
+    );
+    if (!exists) {
+      entries.push({
+        id: nextId++,
+        partyId: sale.partyId,
+        entryType: 'credit_sale',
+        amount: Math.max(0, Number(sale.netPayable) || 0),
+        saleId: sale.id,
+        invoiceNumber: sale.invoiceNumber,
+        paymentMode: sale.paymentMode,
+        reference: sale.transactionReference,
+        notes: `${sale.items.length} medicine line(s) billed on credit`,
+        createdAt: sale.createdAt,
+        createdBy: sale.createdBy,
+        createdByName: sale.createdByName,
+      });
+    }
+  }
+
+  // 2. Reconcile any customer/supplier opening/brought-forward balance so chronological
+  // running balance always converges cleanly to the current stored party.balance.
+  for (const party of parties) {
+    const partyEntries = entries.filter((e) => e.partyId === party.id);
+    const ledgerNet = partyEntries.reduce((sum, e) => {
+      return e.entryType === 'collection' ? sum - e.amount : sum + e.amount;
+    }, 0);
+    const diff = Math.round((party.balance - ledgerNet) * 100) / 100;
+    if (diff > 0.01) {
+      const hasOpening = partyEntries.some(
+        (e) => e.entryType === 'opening_balance',
+      );
+      if (!hasOpening) {
+        const earliestMs = partyEntries.reduce((minMs, e) => {
+          const t = new Date(e.createdAt).getTime();
+          return Number.isFinite(t) && t < minMs ? t : minMs;
+        }, Date.now());
+        const defaultBaseline = new Date('2026-11-01T09:00:00.000Z').getTime();
+        const openingMs =
+          earliestMs > defaultBaseline
+            ? defaultBaseline
+            : earliestMs - 86400000;
+        entries.push({
+          id: nextId++,
+          partyId: party.id,
+          entryType: 'opening_balance',
+          amount: diff,
+          notes: 'Opening / Brought Forward Balance',
+          createdAt: new Date(openingMs).toISOString(),
+        });
+      }
+    }
+  }
+
+  return entries;
+}
+
+export function loadKhataEntries(): KhataEntry[] {
+  const existing = readStorage<KhataEntry[] | null>(STORAGE_KEYS.khata, null);
+  const parties = loadParties();
+  const sales = loadSales();
+  const reconciled = reconcileKhataEntries(
+    parties,
+    sales,
+    Array.isArray(existing) ? existing : [],
+  );
+  if (!existing || reconciled.length !== existing.length) {
+    writeStorage(STORAGE_KEYS.khata, reconciled);
+  }
+  return reconciled;
+}
+
+export function saveKhataEntries(entries: KhataEntry[]): void {
+  writeStorage(STORAGE_KEYS.khata, entries);
+}
+
+export function buildCustomerKhataStatement(params: {
+  party: Party;
+  khataEntries: KhataEntry[];
+  sales: SaleRecord[];
+  items: PharmacyItem[];
+  fromDate?: string;
+  toDate?: string;
+}): CustomerKhataStatement {
+  const { party, khataEntries, sales, items, fromDate, toDate } = params;
+
+  const itemUnitById = new Map<number, string>();
+  for (const it of items) {
+    itemUnitById.set(it.id, it.unit);
+  }
+
+  const partyEntries = khataEntries
+    .filter((e) => e.partyId === party.id)
+    .slice()
+    .sort((a, b) => {
+      const tDiff =
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (tDiff !== 0) return tDiff;
+      return a.id - b.id;
+    });
+
+  const fromMs =
+    fromDate && fromDate.trim()
+      ? new Date(`${fromDate.trim()}T00:00:00`).getTime()
+      : null;
+  const toMs =
+    toDate && toDate.trim()
+      ? new Date(`${toDate.trim()}T23:59:59.999`).getTime()
+      : null;
+
+  let running = 0;
+  let openingBalanceBeforeRange = 0;
+  let capturedRangeOpening = false;
+  const rows: CustomerKhataTimelineRow[] = [];
+
+  for (const entry of partyEntries) {
+    const debit = entry.entryType === 'collection' ? 0 : entry.amount;
+    const credit = entry.entryType === 'collection' ? entry.amount : 0;
+
+    const entryMs = new Date(entry.createdAt).getTime();
+    const afterFrom = fromMs === null || (!Number.isNaN(entryMs) && entryMs >= fromMs);
+    const beforeTo = toMs === null || (!Number.isNaN(entryMs) && entryMs <= toMs);
+
+    if (!capturedRangeOpening && afterFrom) {
+      openingBalanceBeforeRange = Math.round(running * 100) / 100;
+      capturedRangeOpening = true;
+    }
+
+    running = Math.round((running + debit - credit) * 100) / 100;
+
+    if (!afterFrom || !beforeTo) {
+      continue;
+    }
+
+    let linkedSale: SaleRecord | null = null;
+    if (entry.entryType === 'credit_sale') {
+      const found = sales.find(
+        (s) =>
+          (entry.saleId && s.id === entry.saleId) ||
+          (entry.invoiceNumber && s.invoiceNumber === entry.invoiceNumber),
+      );
+      if (found) {
+        linkedSale = {
+          ...found,
+          items: found.items.map((si) => ({
+            ...si,
+            unit: si.unit || itemUnitById.get(si.itemId) || 'Unit',
+          })),
+        };
+      }
+    }
+
+    let title = 'Ledger Entry';
+    let voucherNumber = `KH-${String(entry.id).padStart(4, '0')}`;
+    let subtitle = entry.notes?.trim() || '';
+
+    if (entry.entryType === 'opening_balance') {
+      title = 'Opening Balance';
+      voucherNumber = `OPEN-${String(party.id).padStart(3, '0')}`;
+      subtitle = subtitle || 'Brought forward account balance';
+    } else if (entry.entryType === 'credit_sale') {
+      title = 'Credit Sale (Udhaar)';
+      voucherNumber =
+        entry.invoiceNumber || linkedSale?.invoiceNumber || voucherNumber;
+      const count = linkedSale?.items.length ?? 0;
+      subtitle =
+        count > 0
+          ? `${count} item${count === 1 ? '' : 's'} on credit${
+              linkedSale?.discountAmount
+                ? ` · Disc applied`
+                : ''
+            }`
+          : subtitle || 'Credit bill';
+    } else if (entry.entryType === 'collection') {
+      title = 'Collection Received (Vasooli)';
+      voucherNumber = `COL-${String(entry.id).padStart(4, '0')}`;
+      const bits = [
+        entry.paymentMode || 'Cash',
+        entry.reference?.trim() || '',
+        entry.notes?.trim() || '',
+      ].filter(Boolean);
+      subtitle = bits.join(' · ') || 'Payment received';
+    } else if (entry.entryType === 'adjustment') {
+      title = 'Balance Adjustment';
+      voucherNumber = `ADJ-${String(entry.id).padStart(4, '0')}`;
+      subtitle = subtitle || 'Manual ledger adjustment';
+    }
+
+      rows.push({
+      id: `${entry.entryType}-${entry.id}`,
+      entryId: entry.id,
+      entryType: entry.entryType,
+      createdAt: entry.createdAt,
+      voucherNumber,
+      title,
+      subtitle,
+      debit,
+      credit,
+      runningBalance: running,
+      sale: linkedSale,
+      paymentMode: entry.paymentMode,
+      notes: entry.notes,
+      reference: entry.reference,
+      editedAt: entry.editedAt ?? linkedSale?.editedAt,
+      editedBy: entry.editedBy ?? linkedSale?.editedBy,
+      editedByName: entry.editedByName ?? linkedSale?.editedByName,
+      editReason: entry.editReason ?? linkedSale?.editReason,
+      previousAmount: entry.previousAmount,
+      editSummary: entry.editSummary,
+    });
+  }
+
+  if (!capturedRangeOpening) {
+    openingBalanceBeforeRange = Math.round(running * 100) / 100;
+  }
+
+  const totalCreditGiven =
+    Math.round(rows.reduce((sum, r) => sum + r.debit, 0) * 100) / 100;
+  const totalCollected =
+    Math.round(rows.reduce((sum, r) => sum + r.credit, 0) * 100) / 100;
+  const closingBalanceInRange =
+    rows.length > 0
+      ? rows[rows.length - 1].runningBalance
+      : openingBalanceBeforeRange;
+
+  return {
+    party,
+    openingBalanceBeforeRange,
+    rows,
+    totalCreditGiven,
+    totalCollected,
+    closingBalanceInRange,
+    currentBalanceDue: party.balance,
+  };
+}
+
+export function buildCustomerKhataShareText(params: {
+  statement: CustomerKhataStatement;
+  settings?: Partial<PharmacySettings> | null;
+  fromDate?: string;
+  toDate?: string;
+}): string {
+  const { statement, settings, fromDate, toDate } = params;
+  const pharmacyName =
+    settings?.pharmacyName?.trim() || 'Clinix Community Pharmacy';
+  const phone = settings?.phone?.trim() || '';
+  const fmt = (val: number) => formatMoney(val, settings);
+  const lines: string[] = [
+    `*${pharmacyName.toUpperCase()}*`,
+    `Customer Khata Statement`,
+    ...(phone ? [`Tel: ${phone}`] : []),
+    `--------------------------------`,
+    `Customer: ${statement.party.name}`,
+    ...(statement.party.phone ? [`Phone: ${statement.party.phone}`] : []),
+    `Period: ${fromDate ? fromDate : 'Start'} to ${toDate ? toDate : 'Today'}`,
+    `--------------------------------`,
+    `Total Credit Given: ${fmt(statement.totalCreditGiven)}`,
+    `Total Collected: ${fmt(statement.totalCollected)}`,
+    `*Current Balance Due: ${fmt(statement.currentBalanceDue)}*`,
+    `--------------------------------`,
+  ];
+
+  if (fromDate && statement.openingBalanceBeforeRange !== 0) {
+    lines.push(
+      `Opening Bal (Before ${fromDate}): ${fmt(statement.openingBalanceBeforeRange)}`,
+    );
+  }
+
+  if (statement.rows.length === 0) {
+    lines.push('No transactions in the selected period.');
+  } else {
+    for (const row of statement.rows) {
+      const dateStr = formatDateBySettings(row.createdAt, settings);
+      const amtLabel =
+        row.debit > 0
+          ? `+${fmt(row.debit)} (Credit)`
+          : `-${fmt(row.credit)} (Collected)`;
+      lines.push(
+        `${dateStr} | ${row.voucherNumber} | ${row.title}: ${amtLabel} | Bal: ${fmt(row.runningBalance)}`,
+      );
+      if (row.editedAt && row.editReason) {
+        lines.push(
+          `   [Edited by ${row.editedByName || 'Manager'}: ${row.editReason}${row.editSummary ? ` — ${row.editSummary}` : ''}]`,
+        );
+      }
+      if (row.sale && row.sale.items.length > 0) {
+        for (const item of row.sale.items) {
+          lines.push(
+            `   • ${item.itemName} (${item.quantity} ${item.unit || 'Unit'} x ${fmt(item.unitPrice)}) = ${fmt(item.lineTotal)}`,
+          );
+        }
+      } else if (row.subtitle) {
+        lines.push(`   • ${row.subtitle}`);
+      }
+    }
+  }
+
+  lines.push(`--------------------------------`);
+  lines.push(`Thank you for your continued trust!`);
+  return lines.join('\n');
 }
 
 export function loadPrinterConfig(): PrinterConfig {
@@ -924,7 +1250,7 @@ export function deletePharmacyUser(
 export function exportDatabaseBackupJson(): string {
   const payload = {
     app: 'Clinix Community Pharmacy POS',
-    schemaVersion: 4,
+    schemaVersion: 5,
     exportedAt: new Date().toISOString(),
     tables: {
       app_settings: loadSettings(),
@@ -934,6 +1260,7 @@ export function exportDatabaseBackupJson(): string {
       sales: loadSales(),
       purchases: loadPurchases(),
       expenses: loadExpenses(),
+      khata_entries: loadKhataEntries(),
       printer: loadPrinterConfig(),
     },
   };
@@ -960,6 +1287,7 @@ export function resetDemoDatabase(): {
   sales: SaleRecord[];
   purchases: PurchaseRecord[];
   expenses: ExpenseRecord[];
+  khataEntries: KhataEntry[];
   printer: PrinterConfig;
   settings: PharmacySettings;
 } {
@@ -968,6 +1296,8 @@ export function resetDemoDatabase(): {
   writeStorage(STORAGE_KEYS.sales, SEED_SALES);
   writeStorage(STORAGE_KEYS.purchases, SEED_PURCHASES);
   writeStorage(STORAGE_KEYS.expenses, SEED_EXPENSES);
+  const khataEntries = reconcileKhataEntries(SEED_PARTIES, SEED_SALES, []);
+  writeStorage(STORAGE_KEYS.khata, khataEntries);
   writeStorage(STORAGE_KEYS.printer, DEFAULT_PRINTER_CONFIG);
   const settings = saveSettings({ ...DEFAULT_PHARMACY_SETTINGS });
   return {
@@ -976,6 +1306,7 @@ export function resetDemoDatabase(): {
     sales: SEED_SALES,
     purchases: SEED_PURCHASES,
     expenses: SEED_EXPENSES,
+    khataEntries,
     printer: DEFAULT_PRINTER_CONFIG,
     settings,
   };
@@ -986,6 +1317,7 @@ export interface CompleteSaleResult {
   updatedItems: PharmacyItem[];
   updatedParties: Party[];
   updatedSales: SaleRecord[];
+  updatedKhataEntries: KhataEntry[];
 }
 
 export function isCreditPaymentMode(mode: PaymentMode): boolean {
@@ -1004,6 +1336,7 @@ export function executeSaleTransaction(params: {
   currentItems: PharmacyItem[];
   currentParties: Party[];
   currentSales: SaleRecord[];
+  currentKhataEntries?: KhataEntry[];
 }): CompleteSaleResult {
   const {
     cartLines,
@@ -1077,6 +1410,7 @@ export function executeSaleTransaction(params: {
       saleId: nextSaleId,
       itemId: line.item.id,
       itemName: line.item.name,
+      unit: line.item.unit,
       batchNumber: line.item.batchNumber,
       quantity: line.quantity,
       unitPrice: line.item.sellingPrice,
@@ -1145,6 +1479,29 @@ export function executeSaleTransaction(params: {
 
   const updatedSales = [newSale, ...currentSales];
 
+  const baseKhata = params.currentKhataEntries ?? loadKhataEntries();
+  let updatedKhataEntries = baseKhata;
+  if (isCreditPaymentMode(paymentMode) && party) {
+    const nextKhataId =
+      baseKhata.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+    const newEntry: KhataEntry = {
+      id: nextKhataId,
+      partyId: party.id,
+      entryType: 'credit_sale',
+      amount: netPayable,
+      saleId: newSale.id,
+      invoiceNumber: newSale.invoiceNumber,
+      paymentMode: newSale.paymentMode,
+      reference: cleanRef,
+      notes: `${newSale.items.length} medicine line(s) billed on credit`,
+      createdAt: newSale.createdAt,
+      createdBy,
+      createdByName,
+    };
+    updatedKhataEntries = [...baseKhata, newEntry];
+    saveKhataEntries(updatedKhataEntries);
+  }
+
   saveItems(updatedItems);
   saveParties(updatedParties);
   saveSales(updatedSales);
@@ -1154,6 +1511,484 @@ export function executeSaleTransaction(params: {
     updatedItems,
     updatedParties,
     updatedSales,
+    updatedKhataEntries,
+  };
+}
+
+export function createPartyWithLedger(params: {
+  payload: Omit<Party, 'id'>;
+  currentParties: Party[];
+  currentKhataEntries?: KhataEntry[];
+  createdBy?: string;
+  createdByName?: string;
+}): {
+  party: Party;
+  updatedParties: Party[];
+  updatedKhataEntries: KhataEntry[];
+} {
+  const { payload, currentParties, createdBy, createdByName } = params;
+  const baseKhata = params.currentKhataEntries ?? loadKhataEntries();
+  const nextId = currentParties.reduce((max, p) => Math.max(max, p.id), 0) + 1;
+  const safeBalance = Math.max(0, Math.round((Number(payload.balance) || 0) * 100) / 100);
+  const created: Party = {
+    id: nextId,
+    name: payload.name.trim(),
+    phone: payload.phone.trim(),
+    type: payload.type,
+    balance: safeBalance,
+  };
+  const updatedParties = [...currentParties, created];
+  saveParties(updatedParties);
+
+  let updatedKhataEntries = baseKhata;
+  if (safeBalance > 0) {
+    const nextKhataId =
+      baseKhata.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+    const openingEntry: KhataEntry = {
+      id: nextKhataId,
+      partyId: created.id,
+      entryType: 'opening_balance',
+      amount: safeBalance,
+      notes: 'Opening / Brought Forward Balance',
+      createdAt: new Date().toISOString(),
+      createdBy,
+      createdByName,
+    };
+    updatedKhataEntries = [...baseKhata, openingEntry];
+    saveKhataEntries(updatedKhataEntries);
+  }
+
+  return {
+    party: created,
+    updatedParties,
+    updatedKhataEntries,
+  };
+}
+
+export function recordPartySettlementTransaction(params: {
+  partyId: number;
+  amount: number;
+  paymentMode?: PaymentMode | string;
+  notes?: string;
+  reference?: string;
+  collectedAt?: string;
+  createdBy?: string;
+  createdByName?: string;
+  currentParties: Party[];
+  currentKhataEntries?: KhataEntry[];
+}): {
+  updatedParties: Party[];
+  updatedKhataEntries: KhataEntry[];
+  entry: KhataEntry | null;
+} {
+  const {
+    partyId,
+    amount,
+    paymentMode = 'Cash',
+    notes,
+    reference,
+    collectedAt,
+    createdBy,
+    createdByName,
+    currentParties,
+  } = params;
+  const baseKhata = params.currentKhataEntries ?? loadKhataEntries();
+  const target = currentParties.find((p) => p.id === partyId);
+  if (!target) {
+    return {
+      updatedParties: currentParties,
+      updatedKhataEntries: baseKhata,
+      entry: null,
+    };
+  }
+  const safeAmount = Math.min(
+    target.balance,
+    Math.max(0, Math.round((Number(amount) || 0) * 100) / 100),
+  );
+  if (safeAmount <= 0) {
+    return {
+      updatedParties: currentParties,
+      updatedKhataEntries: baseKhata,
+      entry: null,
+    };
+  }
+
+  const updatedParties = currentParties.map((p) =>
+    p.id === partyId
+      ? {
+          ...p,
+          balance: Math.max(0, Math.round((p.balance - safeAmount) * 100) / 100),
+        }
+      : p,
+  );
+  saveParties(updatedParties);
+
+  const nextKhataId =
+    baseKhata.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+  const isoTimestamp =
+    collectedAt && collectedAt.trim()
+      ? collectedAt.includes('T')
+        ? new Date(collectedAt).toISOString()
+        : new Date(`${collectedAt.trim()}T12:00:00`).toISOString()
+      : new Date().toISOString();
+
+  const entry: KhataEntry = {
+    id: nextKhataId,
+    partyId,
+    entryType: 'collection',
+    amount: safeAmount,
+    paymentMode,
+    reference: reference?.trim() || undefined,
+    notes: notes?.trim() || undefined,
+    createdAt: isoTimestamp,
+    createdBy,
+    createdByName,
+  };
+  const updatedKhataEntries = [...baseKhata, entry];
+  saveKhataEntries(updatedKhataEntries);
+
+  return {
+    updatedParties,
+    updatedKhataEntries,
+    entry,
+  };
+}
+
+export interface EditCreditReceiptLineInput {
+  itemId: number;
+  itemName: string;
+  unit?: string;
+  batchNumber: string;
+  quantity: number;
+  unitPrice: number;
+  costPrice: number;
+  itemDiscount: number;
+}
+
+export interface EditCreditReceiptResult {
+  sale: SaleRecord;
+  auditEntry: SaleAuditLogEntry;
+  updatedItems: PharmacyItem[];
+  updatedParties: Party[];
+  updatedSales: SaleRecord[];
+  updatedKhataEntries: KhataEntry[];
+  previousNetPayable: number;
+  newNetPayable: number;
+}
+
+export function editCreditSaleTransaction(params: {
+  saleId: number;
+  editedLines: EditCreditReceiptLineInput[];
+  billDiscount: number;
+  reason: string;
+  editedBy: string;
+  editedByName: string;
+  editedByRole: string;
+  transactionReference?: string;
+  settings?: Partial<PharmacySettings> | null;
+  currentItems: PharmacyItem[];
+  currentParties: Party[];
+  currentSales: SaleRecord[];
+  currentKhataEntries?: KhataEntry[];
+}): EditCreditReceiptResult {
+  const {
+    saleId,
+    editedLines,
+    billDiscount,
+    reason,
+    editedBy,
+    editedByName,
+    editedByRole,
+    transactionReference,
+    settings,
+    currentItems,
+    currentParties,
+    currentSales,
+  } = params;
+
+  const normalizedRole = editedByRole.trim().toLowerCase();
+  if (normalizedRole !== 'admin' && normalizedRole !== 'manager') {
+    throw new Error(
+      'Only an Admin or Manager can edit and reconcile a credit receipt.',
+    );
+  }
+
+  const cleanReason = reason.trim();
+  if (cleanReason.length < 3) {
+    throw new Error(
+      'Please enter an Audit / Correction Reason (at least 3 characters).',
+    );
+  }
+
+  const originalSale = currentSales.find((s) => s.id === saleId);
+  if (!originalSale) {
+    throw new Error('Original sale receipt was not found.');
+  }
+  if (!isCreditPaymentMode(originalSale.paymentMode) || !originalSale.partyId) {
+    throw new Error(
+      'Only Credit / Khata customer receipts can be edited through this audited workflow.',
+    );
+  }
+
+  if (editedLines.length === 0) {
+    throw new Error('Receipt must contain at least one medicine line item.');
+  }
+
+  for (const line of editedLines) {
+    if (!Number.isFinite(line.quantity) || line.quantity < 1) {
+      throw new Error(`Quantity must be at least 1 for "${line.itemName}".`);
+    }
+    if (!Number.isFinite(line.unitPrice) || line.unitPrice < 0) {
+      throw new Error(`Unit price cannot be negative for "${line.itemName}".`);
+    }
+    if (!Number.isFinite(line.itemDiscount) || line.itemDiscount < 0) {
+      throw new Error(`Discount cannot be negative for "${line.itemName}".`);
+    }
+  }
+
+  // Calculate net quantity delta per itemId: newQty - oldQty
+  const oldQtyByItem = new Map<number, number>();
+  for (const line of originalSale.items) {
+    oldQtyByItem.set(
+      line.itemId,
+      (oldQtyByItem.get(line.itemId) ?? 0) + line.quantity,
+    );
+  }
+
+  const newQtyByItem = new Map<number, number>();
+  for (const line of editedLines) {
+    const qty = Math.floor(line.quantity);
+    newQtyByItem.set(line.itemId, (newQtyByItem.get(line.itemId) ?? 0) + qty);
+  }
+
+  const deltaByItem = new Map<number, number>();
+  const affectedItemIds = new Set<number>([
+    ...oldQtyByItem.keys(),
+    ...newQtyByItem.keys(),
+  ]);
+
+  for (const itemId of affectedItemIds) {
+    const delta = (newQtyByItem.get(itemId) ?? 0) - (oldQtyByItem.get(itemId) ?? 0);
+    if (delta !== 0) {
+      const inv = currentItems.find((it) => it.id === itemId);
+      if (inv && delta > 0 && inv.stockQuantity + 0.0001 < delta) {
+        throw new Error(
+          `Insufficient stock for ${inv.name} (Available: ${inv.stockQuantity}, Additional needed: ${delta}).`,
+        );
+      }
+      deltaByItem.set(itemId, delta);
+    }
+  }
+
+  // Apply stock adjustments cleanly
+  const updatedItems = currentItems.map((item) => {
+    const delta = deltaByItem.get(item.id);
+    if (!delta) return item;
+    return {
+      ...item,
+      stockQuantity:
+        Math.round(Math.max(0, item.stockQuantity - delta) * 100) / 100,
+    };
+  });
+
+  // Recompute receipt totals accurately
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+
+  const updatedSaleItems: SaleItemRecord[] = editedLines.map((line, index) => {
+    const qty = Math.floor(line.quantity);
+    const rate = round2(Math.max(0, line.unitPrice));
+    const gross = round2(rate * qty);
+    const clampedDisc = round2(Math.min(Math.max(0, line.itemDiscount), gross));
+    return {
+      id: index + 1,
+      saleId: originalSale.id,
+      itemId: line.itemId,
+      itemName: line.itemName,
+      unit:
+        line.unit ||
+        currentItems.find((it) => it.id === line.itemId)?.unit ||
+        'Unit',
+      batchNumber: line.batchNumber,
+      quantity: qty,
+      unitPrice: rate,
+      costPrice: line.costPrice,
+      itemDiscount: clampedDisc,
+      lineTotal: round2(gross - clampedDisc),
+    };
+  });
+
+  const subtotal = round2(
+    updatedSaleItems.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0),
+  );
+  const itemDiscountTotal = round2(
+    updatedSaleItems.reduce((sum, l) => sum + l.itemDiscount, 0),
+  );
+  const afterItemDiscount = Math.max(0, round2(subtotal - itemDiscountTotal));
+  const safeBillDiscount = round2(
+    Math.min(Math.max(0, billDiscount), afterItemDiscount),
+  );
+  const totalDiscount = round2(itemDiscountTotal + safeBillDiscount);
+  const newNetPayable = round2(afterItemDiscount - safeBillDiscount);
+  const totalCost = round2(
+    updatedSaleItems.reduce((sum, l) => sum + l.costPrice * l.quantity, 0),
+  );
+  const newNetProfit = round2(newNetPayable - totalCost);
+
+  const editedAt = new Date().toISOString();
+  const prevNet = round2(originalSale.netPayable);
+  const creditDiff = round2(newNetPayable - prevNet);
+  const sign = creditDiff > 0 ? '+' : '';
+  const fmt = (v: number) => formatMoney(v, settings);
+  const summaryParts: string[] = [
+    `Net credit: ${fmt(prevNet)} -> ${fmt(newNetPayable)} (${sign}${fmt(creditDiff)})`,
+  ];
+  if (Math.abs(originalSale.discountAmount - totalDiscount) > 0.005) {
+    summaryParts.push(
+      `Discount: ${fmt(originalSale.discountAmount)} -> ${fmt(totalDiscount)}`,
+    );
+  }
+  const oldTotalQty = originalSale.items.reduce((s, i) => s + i.quantity, 0);
+  const newTotalQty = updatedSaleItems.reduce((s, i) => s + i.quantity, 0);
+  if (oldTotalQty !== newTotalQty || originalSale.items.length !== updatedSaleItems.length) {
+    summaryParts.push(
+      `Lines/Qty: ${originalSale.items.length} (${oldTotalQty} units) -> ${updatedSaleItems.length} (${newTotalQty} units)`,
+    );
+  }
+  const summary = summaryParts.join(' · ');
+
+  const existingLogs = originalSale.auditLogs ?? [];
+  const nextLogId =
+    existingLogs.reduce((max, l) => Math.max(max, l.id), 0) + 1;
+  const auditEntry: SaleAuditLogEntry = {
+    id: nextLogId,
+    editedAt,
+    editedBy,
+    editedByName,
+    editedByRole,
+    reason: cleanReason,
+    previousNetPayable: prevNet,
+    newNetPayable,
+    previousDiscountAmount: round2(originalSale.discountAmount),
+    newDiscountAmount: totalDiscount,
+    summary,
+  };
+
+  const cleanRef =
+    transactionReference !== undefined
+      ? transactionReference.trim() || undefined
+      : originalSale.transactionReference;
+
+  const updatedSale: SaleRecord = {
+    ...originalSale,
+    subtotal,
+    discountAmount: totalDiscount,
+    netPayable: newNetPayable,
+    totalCost,
+    netProfit: newNetProfit,
+    transactionReference: cleanRef,
+    editedAt,
+    editedBy,
+    editedByName,
+    editReason: cleanReason,
+    auditLogs: [...existingLogs, auditEntry],
+    items: updatedSaleItems,
+  };
+
+  const updatedSales = currentSales.map((s) =>
+    s.id === originalSale.id ? updatedSale : s,
+  );
+
+  // Reconcile Khata ledger first so all entries are present before updating
+  const baseKhata = reconcileKhataEntries(
+    currentParties,
+    currentSales,
+    params.currentKhataEntries ?? loadKhataEntries(),
+  );
+
+  let matchedKhata = false;
+  let updatedKhataEntries = baseKhata.map((entry) => {
+    if (
+      !matchedKhata &&
+      entry.entryType === 'credit_sale' &&
+      entry.partyId === originalSale.partyId &&
+      ((originalSale.id && entry.saleId === originalSale.id) ||
+        (originalSale.invoiceNumber &&
+          entry.invoiceNumber === originalSale.invoiceNumber))
+    ) {
+      matchedKhata = true;
+      return {
+        ...entry,
+        amount: newNetPayable,
+        saleId: originalSale.id,
+        invoiceNumber: originalSale.invoiceNumber,
+        reference: cleanRef,
+        notes: `${updatedSaleItems.length} medicine line(s) billed on credit (Edited: ${cleanReason})`,
+        editedAt,
+        editedBy,
+        editedByName,
+        editReason: cleanReason,
+        previousAmount: prevNet,
+        editSummary: summary,
+      };
+    }
+    return entry;
+  });
+
+  if (!matchedKhata) {
+    const nextKhataId =
+      updatedKhataEntries.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+    updatedKhataEntries = [
+      ...updatedKhataEntries,
+      {
+        id: nextKhataId,
+        partyId: originalSale.partyId,
+        entryType: 'credit_sale',
+        amount: newNetPayable,
+        saleId: originalSale.id,
+        invoiceNumber: originalSale.invoiceNumber,
+        paymentMode: originalSale.paymentMode,
+        reference: cleanRef,
+        notes: `${updatedSaleItems.length} medicine line(s) billed on credit (Edited: ${cleanReason})`,
+        createdAt: originalSale.createdAt,
+        createdBy: originalSale.createdBy,
+        createdByName: originalSale.createdByName,
+        editedAt,
+        editedBy,
+        editedByName,
+        editReason: cleanReason,
+        previousAmount: prevNet,
+        editSummary: summary,
+      },
+    ];
+  }
+
+  // Recalculate customer's To Collect balance strictly from ledger entries (zero double-counting)
+  const customerLedgerSum = updatedKhataEntries
+    .filter((e) => e.partyId === originalSale.partyId)
+    .reduce(
+      (sum, e) => (e.entryType === 'collection' ? sum - e.amount : sum + e.amount),
+      0,
+    );
+  const recalculatedBalance = Math.max(0, round2(customerLedgerSum));
+
+  const updatedParties = currentParties.map((p) =>
+    p.id === originalSale.partyId ? { ...p, balance: recalculatedBalance } : p,
+  );
+
+  saveItems(updatedItems);
+  saveParties(updatedParties);
+  saveSales(updatedSales);
+  saveKhataEntries(updatedKhataEntries);
+
+  return {
+    sale: updatedSale,
+    auditEntry,
+    updatedItems,
+    updatedParties,
+    updatedSales,
+    updatedKhataEntries,
+    previousNetPayable: prevNet,
+    newNetPayable,
   };
 }
 

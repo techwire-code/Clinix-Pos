@@ -105,12 +105,27 @@ export interface SaleItemRecord {
   saleId: number;
   itemId: number;
   itemName: string;
+  unit?: string;
   batchNumber: string;
   quantity: number;
   unitPrice: number;
   costPrice: number;
   itemDiscount: number;
   lineTotal: number;
+}
+
+export interface SaleAuditLogEntry {
+  id: number;
+  editedAt: string;
+  editedBy: string;
+  editedByName: string;
+  editedByRole: string;
+  reason: string;
+  previousNetPayable: number;
+  newNetPayable: number;
+  previousDiscountAmount: number;
+  newDiscountAmount: number;
+  summary: string;
 }
 
 export interface SaleRecord {
@@ -130,7 +145,72 @@ export interface SaleRecord {
   createdAt: string;
   createdBy?: string; // Staff username who generated the receipt
   createdByName?: string; // Staff display name
+  editedAt?: string;
+  editedBy?: string;
+  editedByName?: string;
+  editReason?: string;
+  auditLogs?: SaleAuditLogEntry[];
   items: SaleItemRecord[];
+}
+
+export type KhataEntryType =
+  | 'opening_balance'
+  | 'credit_sale'
+  | 'collection'
+  | 'adjustment';
+
+export interface KhataEntry {
+  id: number;
+  partyId: number;
+  entryType: KhataEntryType;
+  amount: number; // Positive magnitude; credit_sale/opening_balance/adjustment add, collection subtracts
+  saleId?: number | null;
+  invoiceNumber?: string;
+  paymentMode?: PaymentMode | string;
+  reference?: string;
+  notes?: string;
+  createdAt: string;
+  createdBy?: string;
+  createdByName?: string;
+  editedAt?: string;
+  editedBy?: string;
+  editedByName?: string;
+  editReason?: string;
+  previousAmount?: number;
+  editSummary?: string;
+}
+
+export interface CustomerKhataTimelineRow {
+  id: string;
+  entryId: number;
+  entryType: KhataEntryType;
+  createdAt: string;
+  voucherNumber: string;
+  title: string;
+  subtitle: string;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+  sale?: SaleRecord | null;
+  paymentMode?: string;
+  notes?: string;
+  reference?: string;
+  editedAt?: string;
+  editedBy?: string;
+  editedByName?: string;
+  editReason?: string;
+  previousAmount?: number;
+  editSummary?: string;
+}
+
+export interface CustomerKhataStatement {
+  party: Party;
+  openingBalanceBeforeRange: number;
+  rows: CustomerKhataTimelineRow[];
+  totalCreditGiven: number;
+  totalCollected: number;
+  closingBalanceInRange: number;
+  currentBalanceDue: number;
 }
 
 export interface PrinterConfig {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'database/db_helper.dart';
 import 'models/pharmacy_models.dart';
 import 'screens/login_screen.dart';
+import 'screens/parties_screen.dart';
 import 'screens/pos_screen.dart';
 import 'screens/printer_settings_screen.dart';
 import 'screens/settings_screen.dart';
@@ -31,7 +32,7 @@ class ClinixPharmacyApp extends StatelessWidget {
   }
 }
 
-enum _ShellSection { pos, printer, settings, users }
+enum _ShellSection { pos, parties, printer, settings, users }
 
 class _ClinixHomeShell extends StatefulWidget {
   const _ClinixHomeShell();
@@ -155,6 +156,13 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
       ),
       if (isManagerOrAdmin)
         (
+          section: _ShellSection.parties,
+          label: 'Parties & Khata',
+          icon: Icons.account_balance_wallet_outlined,
+          selectedIcon: Icons.account_balance_wallet,
+        ),
+      if (isManagerOrAdmin)
+        (
           section: _ShellSection.printer,
           label: 'Thermal Printer',
           icon: Icons.print_outlined,
@@ -183,6 +191,13 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
 
     Widget activePage;
     switch (currentSection) {
+      case _ShellSection.parties:
+        activePage = PartiesScreen(
+          settings: _settings,
+          currentUser: user,
+          onOpenDrawer: _openDrawer,
+        );
+        break;
       case _ShellSection.printer:
         activePage = const PrinterSettingsScreen();
         break;
@@ -204,6 +219,7 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
         activePage = PosScreen(
           settings: _settings,
           currentUserRole: user.role,
+          currentUser: user,
           onOpenDrawer: _openDrawer,
         );
         break;
@@ -293,9 +309,11 @@ class _ClinixHomeShellState extends State<_ClinixHomeShell> {
                       selectedIcon: Icon(dest.selectedIcon),
                       label: dest.label == 'Thermal Printer'
                           ? 'Printer'
-                          : dest.label == 'Users & Roles'
-                              ? 'Users'
-                              : dest.label,
+                          : dest.label == 'Parties & Khata'
+                              ? 'Khata'
+                              : dest.label == 'Users & Roles'
+                                  ? 'Users'
+                                  : dest.label,
                     ),
                   )
                   .toList(),
